@@ -2,8 +2,11 @@ use rand::prelude::*;
 
 use std::{iter, num::NonZeroUsize};
 
+const ACCUMULATOR_BUF_COUNT: usize = 2;
+
 pub struct Network {
-    accumulators: Vec<ActionPotential>,
+    accumulators: [Vec<ActionPotential>; ACCUMULATOR_BUF_COUNT],
+    current_accumulator_buf: usize,
     connection_range: usize,
 
     // parameters
@@ -31,9 +34,12 @@ impl Network {
         let effects = iter::repeat_with(|| Effect(rng.gen()))
             .take(effect_count)
             .collect();
+
+        let accumulator_buf = vec![ActionPotential(0); neuron_count.get()];
         
         Self {
-            accumulators: vec![Default::default(); neuron_count.get()],
+            accumulators: [accumulator_buf.clone(), accumulator_buf],
+            current_accumulator_buf: 0,
             connection_range: connection_range.get(),
             
             action_potentials,
@@ -47,8 +53,11 @@ impl Network {
         let connection_range = effects.len() / neuron_count;
         assert!(connection_range > 0);
 
+        let accumulator_buf = vec![ActionPotential(0); neuron_count];
+        
         Self {
-            accumulators: vec![Default::default(); neuron_count],
+            accumulators: [accumulator_buf.clone(), accumulator_buf],
+            current_accumulator_buf: 0,
             connection_range,
             
             action_potentials,
@@ -70,5 +79,30 @@ impl Network {
 
     pub fn effects_mut(&mut self) -> &mut [Effect] {
         &mut self.effects
+    }
+
+    pub fn last_accumulator_buf(&self) -> &[ActionPotential] {
+        let index = (self.current_accumulator_buf + ACCUMULATOR_BUF_COUNT - 1) % ACCUMULATOR_BUF_COUNT;
+        &self.accumulators[index]
+    }
+
+    pub fn last_accumulator_buf_mut(&mut self) -> &mut [ActionPotential] {
+        let index = (self.current_accumulator_buf + ACCUMULATOR_BUF_COUNT - 1) % ACCUMULATOR_BUF_COUNT;
+        &mut self.accumulators[index]
+    }
+
+    fn advance_accumulator_buf(&mut self) -> &mut [ActionPotential] {
+        let i = (self.current_accumulator_buf + 1) % ACCUMULATOR_BUF_COUNT;
+
+        let count = self.accumulators[i].len();
+        self.accumulators[i].clear();
+        self.accumulators[i].resize(count, ActionPotential(0));
+
+        self.current_accumulator_buf = i;
+        &mut self.accumulators[i]
+    }
+
+    pub fn tick(&mut self) {
+        todo!();
     }
 }
