@@ -1,6 +1,6 @@
 use rand::prelude::*;
 
-use std::{iter, num::NonZeroUsize};
+use std::iter;
 
 const ACCUMULATOR_BUF_COUNT: usize = 2;
 
@@ -21,26 +21,29 @@ pub struct ActionPotential(pub i32);
 pub struct Effect(pub i8);
 
 impl Network {
-    pub fn new(neuron_count: NonZeroUsize, connection_count: NonZeroUsize) -> Self {
-        let effect_count = neuron_count.get().checked_mul(connection_count.get())
+    pub fn new(neuron_count: usize, connection_count: usize) -> Self {
+        assert!(neuron_count > 0);
+        assert!(connection_count > 0);
+        assert!(connection_count <= neuron_count);
+        let effect_count = neuron_count.checked_mul(connection_count)
             .expect("neuron_count or connection_count too big");
 
         let mut rng = thread_rng();
 
         let action_potentials = iter::repeat_with(|| ActionPotential(rng.gen()))
-            .take(neuron_count.get())
+            .take(neuron_count)
             .collect();
 
         let effects = iter::repeat_with(|| Effect(rng.gen()))
             .take(effect_count)
             .collect();
 
-        let accumulator_buf = vec![ActionPotential(0); neuron_count.get()];
+        let accumulator_buf = vec![ActionPotential(0); neuron_count];
         
         Self {
             accumulators: [Some(accumulator_buf.clone()), Some(accumulator_buf)],
             current_cum_buf: 0,
-            connection_count: connection_count.get(),
+            connection_count: connection_count,
             
             action_potentials,
             effects,
@@ -52,6 +55,7 @@ impl Network {
         assert!(neuron_count > 0);
         let connection_count = effects.len() / neuron_count;
         assert!(connection_count > 0);
+        assert!(connection_count <= neuron_count);
 
         let accumulator_buf = vec![ActionPotential(0); neuron_count];
         
@@ -167,5 +171,59 @@ impl Network {
         self.accumulators[i] = Some(cum);
 
         self.current_cum_buf = i;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[should_panic]
+    fn catch_zero_neuron_count() {
+        let _ = Network::new(0, 1);
+    }
+    
+    #[test]
+    #[should_panic]
+    fn catch_zero_connection_count() {
+        let _ = Network::new(1, 0);
+    }
+    
+    #[test]
+    #[should_panic]
+    fn catch_invalid_connection_count() {
+        let _ = Network::new(1, 2);
+    }
+
+    #[test]
+    #[should_panic]
+    fn catch_effect_count_overflow() {
+        let max = usize::MAX;
+        let _ = Network::new(max, 2);
+    }
+
+    #[test]
+    #[should_panic]
+    fn catch_zero_action_potentials() {
+        let _ = Network::with_params(vec![], vec![Effect(0)]);
+    }
+    
+    #[test]
+    #[should_panic]
+    fn catch_zero_effects() {
+        let _ = Network::with_params(vec![ActionPotential(0)], vec![]);
+    }
+    
+    #[test]
+    #[should_panic]
+    fn catch_too_little_effects() {
+        let _ = Network::with_params(vec![ActionPotential(0); 2], vec![Effect(0)]);
+    }
+    
+    #[test]
+    #[should_panic]
+    fn catch_too_many_effects() {
+        let _ = Network::with_params(vec![ActionPotential(0); 2], vec![Effect(0); 6]);
     }
 }
