@@ -109,12 +109,21 @@ impl Network {
     }
 
     fn apply_effects(&self, neuron: usize, cum: &mut [ActionPotential]) {
-        let extent_back = self.connection_count / 2;
-
         // think of the neurons as being arranged in a circle.
         // for any given neuron, we apply effects to neurons within 
         // a slice of this circle with a size specified by self.connection_count.
         // the neuron is at the center of this slice and the slice cannot overlap.
+
+        // amount of neurons before and after current neuron (on the circle).
+        let extent_back = self.connection_count / 2;
+        let extent_front = if extent_back == 0 {
+            0
+        } else if self.connection_count % 2 != 0 {
+            extent_back
+        } else {
+            extent_back - 1
+        };
+
         let (neuron_start, effect_start, count) = if neuron < extent_back {
             // the amount of neurons appearing before index 0 on the circle
             // is guaranteed to be at least 1
@@ -134,10 +143,29 @@ impl Network {
 
             // handle rest of effects in next loop
             (0, back_count, self.connection_count - back_count)
-        } else {
+        } else if (neuron + extent_front) >= self.action_potentials.len() {
+            let front_count = (neuron + extent_front) - (self.action_potentials.len() - 1);
+            // each row in self.effects is self.connection_count long.
+            // so the last n rows start at index self.connection_count - n.
+            // n = front_count in this case
+            let front_effect_start = self.connection_count - front_count;
+
+            for i in 0..front_count {
+                self.apply_single_effect(
+                    0 + i,
+                    neuron,
+                    front_effect_start + i,
+                    cum,
+                );
+            }
+
             // neuron >= extent_back so we can go to the start without wrapping around
-            let start = neuron - extent_back;
-            (start, 0, self.connection_count)
+            let neuron_start = neuron - extent_back;
+            (neuron_start, 0, self.connection_count - front_count)
+        } else {
+            // whole slice fits within the array bounds
+            let neuron_start = neuron - extent_back;
+            (neuron_start, 0, self.connection_count)
         };
 
         for i in 0..count {
@@ -225,5 +253,38 @@ mod tests {
     #[should_panic]
     fn catch_too_many_effects() {
         let _ = Network::with_params(vec![ActionPotential(0); 2], vec![Effect(0); 6]);
+    }
+
+    #[test]
+    fn test_tick() {
+        let action_potentials = vec![
+            ActionPotential(0),
+            ActionPotential(16),
+            ActionPotential(-16),
+        ];
+        let effects = vec![
+            Effect(-8), Effect(1), Effect(2),
+            Effect(-17), Effect(127), Effect(0),
+            Effect(127), Effect(0), Effect(0),
+        ];
+
+        let mut net = Network::with_params(action_potentials, effects);
+        net.tick();
+
+        let expected = [
+            ActionPotential(1),
+            ActionPotential(129),
+            ActionPotential(-8),
+        ];
+
+        let result = net.last_accumulator_buf();
+
+        assert_eq!(
+            result,
+            &expected,
+            "accumulator buf had unexpected contents",
+        );
+
+
     }
 }
