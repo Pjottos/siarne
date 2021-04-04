@@ -100,7 +100,8 @@ impl Network {
         let mut cum = self.accumulators[self.current_cum_buf].take().unwrap();
 
         for (neuron, &value) in self.last_accumulator_buf().iter().enumerate() {
-            if value >= self.action_potentials[neuron] {
+            // safety: length of parameter vecs must not change after construction of network
+            if value >= unsafe { *self.action_potentials.get_unchecked(neuron) } {
                 self.apply_effects(neuron, &mut cum);
             }
         }
@@ -135,12 +136,14 @@ impl Network {
             for i in 0..back_count {
                 // in this loop effect_start is 0 because it happens first.
                 // in the next loop it will continue where this loop left off.
-                self.apply_single_effect(
-                    back_start + i,
-                    neuron,
-                    0 + i,
-                    cum,
-                );
+                unsafe {
+                    self.apply_single_effect(
+                        back_start + i,
+                        neuron,
+                        0 + i,
+                        cum,
+                    );
+                }
             }
 
             // handle rest of effects in next loop
@@ -153,12 +156,14 @@ impl Network {
             let front_effect_start = self.connection_count - front_count;
 
             for i in 0..front_count {
-                self.apply_single_effect(
-                    0 + i,
-                    neuron,
-                    front_effect_start + i,
-                    cum,
-                );
+                unsafe {
+                    self.apply_single_effect(
+                        0 + i,
+                        neuron,
+                        front_effect_start + i,
+                        cum,
+                    );
+                }
             }
 
             // neuron >= extent_back so we can go to the start without wrapping around
@@ -171,25 +176,27 @@ impl Network {
         };
 
         for i in 0..count {
-            self.apply_single_effect(
-                neuron_start + i,
-                neuron,
-                effect_start + i,
-                cum,
-            );
+            unsafe {
+                self.apply_single_effect(
+                    neuron_start + i,
+                    neuron,
+                    effect_start + i,
+                    cum,
+                );
+            }
         }
     }
 
     #[inline]
-    fn apply_single_effect(
+    unsafe fn apply_single_effect(
         &self, 
         dst_neuron: usize, 
         src_neuron: usize, 
         local_effect: usize, 
         cum: &mut [ActionPotential]
     ) {
-        let effect = self.effects[(src_neuron * self.connection_count) + local_effect];
-        cum[dst_neuron].0 += effect.0 as i32;
+        let effect = *self.effects.get_unchecked((src_neuron * self.connection_count) + local_effect);
+        cum.get_unchecked_mut(dst_neuron).0 += effect.0 as i32;
     }
     
     #[inline]
