@@ -95,6 +95,7 @@ impl Network {
         self.accumulators[index].as_mut().unwrap()
     }
 
+    #[inline]
     pub fn tick(&mut self) {
         let mut cum = self.accumulators[self.current_cum_buf].take().unwrap();
 
@@ -108,6 +109,7 @@ impl Network {
         self.advance_cum_buf();
     }
 
+    #[inline]
     fn apply_effects(&self, neuron: usize, cum: &mut [ActionPotential]) {
         // think of the neurons as being arranged in a circle.
         // for any given neuron, we apply effects to neurons within 
@@ -178,6 +180,7 @@ impl Network {
         }
     }
 
+    #[inline]
     fn apply_single_effect(
         &self, 
         dst_neuron: usize, 
@@ -189,6 +192,7 @@ impl Network {
         cum[dst_neuron].0 += effect.0 as i32;
     }
     
+    #[inline]
     fn advance_cum_buf(&mut self) {
         let i = (self.current_cum_buf + 1) % ACCUMULATOR_BUF_COUNT;
 

@@ -8,3 +8,17 @@ edition = "2018"
 
 [dependencies]
 rand = "0.8"
+
+[dev-dependencies]
+criterion = "0.3"
+
+[[bench]]
+name = "network_tick"
+harness = false
+
+[profile.release]
+lto = true
+
+[profile.bench]
+lto = true
+debug = 1
