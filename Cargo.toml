@@ -16,6 +16,9 @@ criterion = "0.3"
 name = "network_tick"
 harness = false
 
+[profile.release]
+lto = true
+
 [profile.bench]
 lto = true
 debug = 1
