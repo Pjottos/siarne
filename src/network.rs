@@ -101,8 +101,10 @@ impl Network {
 
         for (neuron, &value) in self.last_accumulator_buf().iter().enumerate() {
             // safety: length of parameter vecs must not change after construction of network
-            if value >= unsafe { *self.action_potentials.get_unchecked(neuron) } {
-                self.apply_effects(neuron, &mut cum);
+            unsafe {
+                if value >= *self.action_potentials.get_unchecked(neuron) {
+                    self.apply_effects(neuron, &mut cum);
+                }
             }
         }
 
@@ -111,7 +113,7 @@ impl Network {
     }
 
     #[inline]
-    fn apply_effects(&self, neuron: usize, cum: &mut [ActionPotential]) {
+    unsafe fn apply_effects(&self, neuron: usize, cum: &mut [ActionPotential]) {
         // think of the neurons as being arranged in a circle.
         // for any given neuron, we apply effects to neurons within 
         // a slice of this circle with a size specified by self.connection_count.
@@ -136,14 +138,12 @@ impl Network {
             for i in 0..back_count {
                 // in this loop effect_start is 0 because it happens first.
                 // in the next loop it will continue where this loop left off.
-                unsafe {
-                    self.apply_single_effect(
-                        back_start + i,
-                        neuron,
-                        0 + i,
-                        cum,
-                    );
-                }
+                self.apply_single_effect(
+                    back_start + i,
+                    neuron,
+                    0 + i,
+                    cum,
+                );
             }
 
             // handle rest of effects in next loop
@@ -156,14 +156,12 @@ impl Network {
             let front_effect_start = self.connection_count - front_count;
 
             for i in 0..front_count {
-                unsafe {
-                    self.apply_single_effect(
-                        0 + i,
-                        neuron,
-                        front_effect_start + i,
-                        cum,
-                    );
-                }
+                self.apply_single_effect(
+                    0 + i,
+                    neuron,
+                    front_effect_start + i,
+                    cum,
+                );
             }
 
             // neuron >= extent_back so we can go to the start without wrapping around
@@ -176,14 +174,12 @@ impl Network {
         };
 
         for i in 0..count {
-            unsafe {
-                self.apply_single_effect(
-                    neuron_start + i,
-                    neuron,
-                    effect_start + i,
-                    cum,
-                );
-            }
+            self.apply_single_effect(
+                neuron_start + i,
+                neuron,
+                effect_start + i,
+                cum,
+            );
         }
     }
 
