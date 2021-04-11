@@ -73,3 +73,62 @@ pub fn apply_parameter_noise(
     // }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::network::{ActionPotential, Effect};
+
+    #[test]
+    fn noise_determinism() {
+        let mut net = Network::with_params(vec![ActionPotential(0); 16], vec![Effect(0); 32]);
+
+        for i in u8::MIN..u8::MAX {
+            apply_parameter_noise(&mut net, 1234, i);
+        }
+
+        // keep in mind this is not typical output, but since we used high power values it is expected
+        assert_eq!(
+            net.action_potentials(),
+            &[
+                ActionPotential(69532),
+                ActionPotential(-22778),
+                ActionPotential(-22074),
+                ActionPotential(3581),
+                ActionPotential(39458),
+                ActionPotential(-160451),
+                ActionPotential(1837),
+                ActionPotential(-6831),
+                ActionPotential(-26941),
+                ActionPotential(-6180),
+                ActionPotential(-6599),
+                ActionPotential(-15744),
+                ActionPotential(17308),
+                ActionPotential(40702),
+                ActionPotential(4704),
+                ActionPotential(425739),
+            ],
+        );
+
+        assert_eq!(
+            net.effects(),
+            &[
+                Effect(127), Effect(0),
+                Effect(127), Effect(-128),
+                Effect(-128), Effect(-128),
+                Effect(-128), Effect(127),
+                Effect(-128), Effect(127),
+                Effect(127), Effect(-128),
+                Effect(-128), Effect(127),
+                Effect(-128), Effect(127),
+                Effect(-128), Effect(127),
+                Effect(127), Effect(-128),
+                Effect(127), Effect(-128),
+                Effect(-128), Effect(-128),
+                Effect(-128), Effect(127),
+                Effect(-128), Effect(-128),
+                Effect(-128), Effect(127),
+                Effect(-128), Effect(127),
+            ],
+        );
+    }
+}
