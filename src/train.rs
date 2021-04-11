@@ -1,3 +1,5 @@
+//! Code related to tweaking the parameters of [Network]s to get desired output from them.
+
 use crate::{Network, network::{ActionPotential, Effect}};
 
 use rand::{prelude::*, distributions};

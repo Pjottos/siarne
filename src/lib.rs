@@ -1,6 +1,6 @@
 
 
-mod network;
+pub mod network;
 pub mod train;
 
 pub use network::Network;

@@ -1,9 +1,12 @@
+//! Code related to creating and executing [Network]s
+
 use rand::prelude::*;
 
 use std::iter;
 
 const ACCUMULATOR_BUF_COUNT: usize = 2;
 
+/// A structure containing a collection of interconnected neurons.
 pub struct Network {
     accumulators: [Option<Vec<ActionPotential>>; ACCUMULATOR_BUF_COUNT],
     current_cum_buf: usize,
@@ -14,13 +17,24 @@ pub struct Network {
     effects: Vec<Effect>,
 }
 
+/// The action potential of a neuron, i.e the minimum sum of its
+/// inputs for it to fire.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Default)]
 pub struct ActionPotential(pub i32);
 
+/// The effect of a connection is the value added to the input of a neuron
+/// when the neuron at the other end of the connection fires. Connections
+/// are one-directional.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Default)]
 pub struct Effect(pub i8);
 
 impl Network {
+    /// Create a [Network] with randomly initialized parameters.  
+    /// `connection_count` is the amount of inputs per neuron.
+    /// # Panics
+    /// When `neuron_count` or `connection_count` is 0.  
+    /// When `connection_count` > `neuron_count`.   
+    /// When the result of `neuron_count * connection_count` does not fit in a [usize].  
     pub fn new(neuron_count: usize, connection_count: usize) -> Self {
         assert!(neuron_count > 0);
         assert!(connection_count > 0);
@@ -50,6 +64,11 @@ impl Network {
         }
     }
 
+    /// Create a [Network] with the specified parameters.
+    /// # Panics
+    /// When `action_potentials` or `effects` is empty.  
+    /// When there are more action potentials than effects.  
+    /// When the amount of effects per action potential is greater than the amount of action potentials.  
     pub fn with_params(action_potentials: Vec<ActionPotential>, effects: Vec<Effect>) -> Self {
         let neuron_count = action_potentials.len();
         assert!(neuron_count > 0);
@@ -69,32 +88,62 @@ impl Network {
         }
     }
 
+    /// Returns a slice of the action potentials of the neurons.
     pub fn action_potentials(&self) -> &[ActionPotential] {
         &self.action_potentials
     }
 
+    /// Returns a mutable slice of the action potentials of the neurons.
     pub fn action_potentials_mut(&mut self) -> &mut [ActionPotential] {
         &mut self.action_potentials
     }
     
+    /// Returns a slice of the effects of the connections between neurons.  
+    /// This is a matrix with dimensions `connection_count` x `neuron_count` where the center of 
+    /// each row (rounded to 0) is the connection of the neuron to itself. The other connections
+    /// are to adjacent neurons where the neurons are arranged in a circle.
     pub fn effects(&self) -> &[Effect] {
         &self.effects
     }
 
+    /// Returns a mutable slice of the effects of the connections between neurons.  
+    /// See [Network::effects] for more information.
     pub fn effects_mut(&mut self) -> &mut [Effect] {
         &mut self.effects
     }
 
+    /// Returns a slice of the inputs of the neurons on the last executed tick.  
+    /// These values will be used in the next tick to determine which neurons should fire.
+    /// The values can also be used to extract output from the network by reading the values
+    /// at arbitrary indices so long as the same indices are used each time. 
+    /// # Examples
+    /// ```
+    /// # use ans::Network;
+    /// let mut net = Network::new(16, 2);
+    /// 
+    /// // introduce information from outside the network
+    /// net.last_accumulator_buf_mut()[0].0 += 123; 
+    ///
+    /// net.tick();
+    ///
+    /// // keep in mind it might take multiple ticks for the
+    /// // input introduced at one neuron to propagate to the output
+    /// // depending on the connection_count and distance between the neurons
+    /// println!("Output: {}", net.last_accumulator_buf()[1].0);
+    /// ```
     pub fn last_accumulator_buf(&self) -> &[ActionPotential] {
         let index = (self.current_cum_buf + ACCUMULATOR_BUF_COUNT - 1) % ACCUMULATOR_BUF_COUNT;
         self.accumulators[index].as_ref().unwrap()
     }
 
+    /// Returns a mutable slice of the inputs of the neurons on the last executed tick.  
+    /// For more information see [Network::last_accumulator_buf].
     pub fn last_accumulator_buf_mut(&mut self) -> &mut [ActionPotential] {
         let index = (self.current_cum_buf + ACCUMULATOR_BUF_COUNT - 1) % ACCUMULATOR_BUF_COUNT;
         self.accumulators[index].as_mut().unwrap()
     }
 
+    /// Execute a tick on the network, updating [Network::last_accumulator_buf]
     #[inline]
     pub fn tick(&mut self) {
         let mut cum = self.accumulators[self.current_cum_buf].take().unwrap();
@@ -291,7 +340,5 @@ mod tests {
             &expected,
             "accumulator buf had unexpected contents",
         );
-
-
     }
 }
