@@ -1,7 +1,14 @@
-use crate::Network;
+use crate::{Network, network::{ActionPotential, Effect}};
 
 use rand::{prelude::*, distributions};
 use rand_chacha::ChaCha8Rng;
+
+/// Parameters for a noise pass, see [build_network_from_noise].
+#[derive(Debug, Clone, Copy)]
+pub struct NoisePassParams {
+    pub seed: u64,
+    pub power: u8,
+}
 
 /// Apply noise to the parameters of a [Network].
 /// This process is deterministic.  
@@ -73,61 +80,90 @@ pub fn apply_parameter_noise(
     // }
 }
 
+/// Constructs a [Network] by generating initial parameters with `seed`,
+/// then applying the specified `passes` of noise.  
+/// See [apply_parameter_noise] for more information.
+/// # Panics
+/// See [Network::new]. 
+pub fn build_network_from_noise<Is>(
+    neuron_count: usize,
+    connection_count: usize,
+    seed: u64,
+    passes: Is,
+) -> Network
+where
+    Is: Iterator<Item = NoisePassParams>
+{
+    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+    let action_potentials = std::iter::repeat_with(|| ActionPotential(rng.gen()))
+        .take(neuron_count)
+        .collect();
+    
+    let effects = std::iter::repeat_with(|| Effect(rng.gen()))
+        .take(neuron_count.checked_mul(connection_count).unwrap())
+        .collect();
+    
+    let mut net = Network::with_params(action_potentials, effects);
+
+    for pass in passes {
+        apply_parameter_noise(&mut net, pass.seed, pass.power);
+    }
+
+    net
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::network::{ActionPotential, Effect};
 
     #[test]
     fn noise_determinism() {
-        let mut net = Network::with_params(vec![ActionPotential(0); 16], vec![Effect(0); 32]);
+        let passes = (0..=u8::MAX)
+            .map(|i| NoisePassParams { seed: i as u64 + 1234, power: u8::MAX - i });
 
-        for i in u8::MIN..u8::MAX {
-            apply_parameter_noise(&mut net, 1234, i);
-        }
+        let net = build_network_from_noise(16, 2, 1234, passes);
 
-        // keep in mind this is not typical output, but since we used high power values it is expected
         assert_eq!(
             net.action_potentials(),
             &[
-                ActionPotential(69532),
-                ActionPotential(-22778),
-                ActionPotential(-22074),
-                ActionPotential(3581),
-                ActionPotential(39458),
-                ActionPotential(-160451),
-                ActionPotential(1837),
-                ActionPotential(-6831),
-                ActionPotential(-26941),
-                ActionPotential(-6180),
-                ActionPotential(-6599),
-                ActionPotential(-15744),
-                ActionPotential(17308),
-                ActionPotential(40702),
-                ActionPotential(4704),
-                ActionPotential(425739),
+                ActionPotential(-1278279962),
+                ActionPotential(1657864061),
+                ActionPotential(239123806),
+                ActionPotential(-15785932),
+                ActionPotential(-455062199),
+                ActionPotential(-1731366824),
+                ActionPotential(597245901),
+                ActionPotential(1358662888),
+                ActionPotential(555452750),
+                ActionPotential(646707917),
+                ActionPotential(-344060829),
+                ActionPotential(1485825241),
+                ActionPotential(-1644047160),
+                ActionPotential(-1839883124),
+                ActionPotential(-1904695363),
+                ActionPotential(702228411),
             ],
         );
 
         assert_eq!(
             net.effects(),
             &[
-                Effect(127), Effect(0),
-                Effect(127), Effect(-128),
-                Effect(-128), Effect(-128),
-                Effect(-128), Effect(127),
-                Effect(-128), Effect(127),
-                Effect(127), Effect(-128),
-                Effect(-128), Effect(127),
-                Effect(-128), Effect(127),
-                Effect(-128), Effect(127),
-                Effect(127), Effect(-128),
-                Effect(127), Effect(-128),
-                Effect(-128), Effect(-128),
-                Effect(-128), Effect(127),
-                Effect(-128), Effect(-128),
-                Effect(-128), Effect(127),
-                Effect(-128), Effect(127),
+                Effect(117), Effect(-128),
+                Effect(-102), Effect(124),
+                Effect(-103), Effect(-64),
+                Effect(-32), Effect(65),
+                Effect(-71), Effect(73),
+                Effect(-82), Effect(-128),
+                Effect(127), Effect(-87),
+                Effect(23), Effect(-74),
+                Effect(-97), Effect(-91),
+                Effect(-69), Effect(-63),
+                Effect(89), Effect(80),
+                Effect(-79), Effect(-123),
+                Effect(-102), Effect(-3),
+                Effect(126), Effect(-107),
+                Effect(127), Effect(121),
+                Effect(95), Effect(-128),
             ],
         );
     }
