@@ -1,4 +1,4 @@
-use crate::{Network, network::{ActionPotential, Effect}};
+use crate::{Network, network::{NeuronValue, Effect}};
 
 use rand::{prelude::*, distributions};
 use rand_chacha::ChaCha8Rng;
@@ -52,10 +52,10 @@ pub fn apply_parameter_noise(
         effect.0 = effect.0.saturating_add(noise);
     }
 
-    for action_potential in net.action_potentials_mut().iter_mut() {
+    for treshold in net.tresholds_mut().iter_mut() {
         let noise = offset()
             .clamp(i32::MIN as i64, i32::MAX as i64) as i32;
-        action_potential.0 = action_potential.0.saturating_add(noise);
+        treshold.0 = treshold.0.saturating_add(noise);
     }
     
     // let tmp: Vec<_> = std::iter::repeat_with(|| offset())
@@ -95,7 +95,7 @@ where
     Is: Iterator<Item = NoisePassParams>
 {
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
-    let action_potentials = std::iter::repeat_with(|| ActionPotential(rng.gen()))
+    let tresholds = std::iter::repeat_with(|| NeuronValue(rng.gen()))
         .take(neuron_count)
         .collect();
     
@@ -103,7 +103,7 @@ where
         .take(neuron_count.checked_mul(connection_count).unwrap())
         .collect();
     
-    let mut net = Network::with_params(action_potentials, effects);
+    let mut net = Network::with_params(tresholds, effects);
 
     for pass in passes {
         apply_parameter_noise(&mut net, pass.seed, pass.power);
@@ -124,24 +124,24 @@ mod tests {
         let net = build_network_from_noise(16, 2, 1234, passes);
 
         assert_eq!(
-            net.action_potentials(),
+            net.tresholds(),
             &[
-                ActionPotential(-1278279962),
-                ActionPotential(1657864061),
-                ActionPotential(239123806),
-                ActionPotential(-15785932),
-                ActionPotential(-455062199),
-                ActionPotential(-1731366824),
-                ActionPotential(597245901),
-                ActionPotential(1358662888),
-                ActionPotential(555452750),
-                ActionPotential(646707917),
-                ActionPotential(-344060829),
-                ActionPotential(1485825241),
-                ActionPotential(-1644047160),
-                ActionPotential(-1839883124),
-                ActionPotential(-1904695363),
-                ActionPotential(702228411),
+                NeuronValue(-1278279962),
+                NeuronValue(1657864061),
+                NeuronValue(239123806),
+                NeuronValue(-15785932),
+                NeuronValue(-455062199),
+                NeuronValue(-1731366824),
+                NeuronValue(597245901),
+                NeuronValue(1358662888),
+                NeuronValue(555452750),
+                NeuronValue(646707917),
+                NeuronValue(-344060829),
+                NeuronValue(1485825241),
+                NeuronValue(-1644047160),
+                NeuronValue(-1839883124),
+                NeuronValue(-1904695363),
+                NeuronValue(702228411),
             ],
         );
 

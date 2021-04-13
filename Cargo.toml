@@ -1,6 +1,6 @@
 [package]
 name = "ans"
-version = "0.1.1"
+version = "0.2.0"
 authors = ["Pjottos <35270305+Pjottos@users.noreply.github.com>"]
 edition = "2018"
 

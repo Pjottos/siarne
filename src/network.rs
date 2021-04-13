@@ -8,19 +8,18 @@ const ACCUMULATOR_BUF_COUNT: usize = 2;
 
 /// A structure containing a collection of interconnected neurons.
 pub struct Network {
-    accumulators: [Option<Vec<ActionPotential>>; ACCUMULATOR_BUF_COUNT],
+    accumulators: [Option<Vec<NeuronValue>>; ACCUMULATOR_BUF_COUNT],
     current_cum_buf: usize,
     connection_count: usize,
 
     // parameters
-    action_potentials: Vec<ActionPotential>,
+    tresholds: Vec<NeuronValue>,
     effects: Vec<Effect>,
 }
 
-/// The action potential of a neuron, i.e the minimum sum of its
-/// inputs for it to fire.
+/// A value related to the input of a neuron.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Default)]
-pub struct ActionPotential(pub i32);
+pub struct NeuronValue(pub i32);
 
 /// The effect of a connection is the value added to the input of a neuron
 /// when the neuron at the other end of the connection fires. Connections
@@ -44,7 +43,7 @@ impl Network {
 
         let mut rng = thread_rng();
 
-        let action_potentials = iter::repeat_with(|| ActionPotential(rng.gen()))
+        let tresholds = iter::repeat_with(|| NeuronValue(rng.gen()))
             .take(neuron_count)
             .collect();
 
@@ -52,52 +51,52 @@ impl Network {
             .take(effect_count)
             .collect();
 
-        let accumulator_buf = vec![ActionPotential(0); neuron_count];
+        let accumulator_buf = vec![NeuronValue(0); neuron_count];
         
         Self {
             accumulators: [Some(accumulator_buf.clone()), Some(accumulator_buf)],
             current_cum_buf: 0,
             connection_count: connection_count,
             
-            action_potentials,
+            tresholds,
             effects,
         }
     }
 
     /// Create a [Network] with the specified parameters.
     /// # Panics
-    /// When `action_potentials` or `effects` is empty.  
-    /// When there are more action potentials than effects.  
-    /// When the amount of effects per action potential is greater than the amount of action potentials.  
-    pub fn with_params(action_potentials: Vec<ActionPotential>, effects: Vec<Effect>) -> Self {
-        let neuron_count = action_potentials.len();
+    /// When `tresholds` or `effects` is empty.  
+    /// When there are more tresholds than effects.  
+    /// When the amount of effects per treshold is greater than the amount of tresholds.  
+    pub fn with_params(tresholds: Vec<NeuronValue>, effects: Vec<Effect>) -> Self {
+        let neuron_count = tresholds.len();
         assert!(neuron_count > 0);
         let connection_count = effects.len() / neuron_count;
         assert!(connection_count > 0);
         assert!(connection_count <= neuron_count);
 
-        let accumulator_buf = vec![ActionPotential(0); neuron_count];
+        let accumulator_buf = vec![NeuronValue(0); neuron_count];
         
         Self {
             accumulators: [Some(accumulator_buf.clone()), Some(accumulator_buf)],
             current_cum_buf: 0,
             connection_count,
             
-            action_potentials,
+            tresholds,
             effects,
         }
     }
 
-    /// Returns a slice of the action potentials of the neurons.
+    /// Returns a slice of the fire tresholds of the neurons.
     #[inline]
-    pub fn action_potentials(&self) -> &[ActionPotential] {
-        &self.action_potentials
+    pub fn tresholds(&self) -> &[NeuronValue] {
+        &self.tresholds
     }
 
-    /// Returns a mutable slice of the action potentials of the neurons.
+    /// Returns a mutable slice of the fire tresholds of the neurons.
     #[inline]
-    pub fn action_potentials_mut(&mut self) -> &mut [ActionPotential] {
-        &mut self.action_potentials
+    pub fn tresholds_mut(&mut self) -> &mut [NeuronValue] {
+        &mut self.tresholds
     }
     
     /// Returns a slice of the effects of the connections between neurons.  
@@ -156,7 +155,7 @@ impl Network {
     /// println!("Output: {}", net.last_accumulator_buf()[1].0);
     /// ```
     #[inline]
-    pub fn last_accumulator_buf(&self) -> &[ActionPotential] {
+    pub fn last_accumulator_buf(&self) -> &[NeuronValue] {
         let index = (self.current_cum_buf + ACCUMULATOR_BUF_COUNT - 1) % ACCUMULATOR_BUF_COUNT;
         self.accumulators[index].as_ref().unwrap()
     }
@@ -164,7 +163,7 @@ impl Network {
     /// Returns a mutable slice of the inputs of the neurons on the last executed tick.  
     /// For more information see [Network::last_accumulator_buf].
     #[inline]
-    pub fn last_accumulator_buf_mut(&mut self) -> &mut [ActionPotential] {
+    pub fn last_accumulator_buf_mut(&mut self) -> &mut [NeuronValue] {
         let index = (self.current_cum_buf + ACCUMULATOR_BUF_COUNT - 1) % ACCUMULATOR_BUF_COUNT;
         self.accumulators[index].as_mut().unwrap()
     }
@@ -173,7 +172,7 @@ impl Network {
     pub fn tick(&mut self) {
         let mut cum = self.accumulators[self.current_cum_buf].take().unwrap();
         let inputs = self.last_accumulator_buf();
-        let neuron_count = self.action_potentials.len();
+        let neuron_count = self.tresholds.len();
 
         // think of the neurons as being arranged in a circle.
         // for any given neuron, we observe a slice of this circle with
@@ -196,7 +195,7 @@ impl Network {
             // after construction of the network.
             unsafe {
                 let input = inputs.get_unchecked(src);
-                let treshold = self.action_potentials.get_unchecked(src);
+                let treshold = self.tresholds.get_unchecked(src);
 
                 if input >= treshold {
                     let wrapping_range = neuron_count - extent_back + src..neuron_count;
@@ -219,7 +218,7 @@ impl Network {
         for src in extent_back..neuron_count - extent_front {
             unsafe {
                 let input = inputs.get_unchecked(src);
-                let treshold = self.action_potentials.get_unchecked(src);
+                let treshold = self.tresholds.get_unchecked(src);
 
                 if input >= treshold {
                     self.apply_effects(
@@ -235,7 +234,7 @@ impl Network {
         for src in neuron_count - extent_front..neuron_count {
             unsafe {
                 let input = inputs.get_unchecked(src);
-                let treshold = self.action_potentials.get_unchecked(src);
+                let treshold = self.tresholds.get_unchecked(src);
 
                 if input >= treshold {
                     let non_wrapping_range = src - extent_back..neuron_count;
@@ -263,7 +262,7 @@ impl Network {
     #[inline]
     unsafe fn apply_effects(
         &self,
-        cum: &mut [ActionPotential],
+        cum: &mut [NeuronValue],
         src: usize,
         dst_range: Range<usize>,
         offset: usize,
@@ -282,7 +281,7 @@ impl Network {
         let mut cum = self.accumulators[i].take().unwrap();
         let count = cum.len();
         cum.clear();
-        cum.resize(count, ActionPotential(0));
+        cum.resize(count, NeuronValue(0));
         self.accumulators[i] = Some(cum);
 
         self.current_cum_buf = i;
@@ -327,27 +326,27 @@ mod tests {
     #[test]
     #[should_panic]
     fn catch_zero_effects() {
-        let _ = Network::with_params(vec![ActionPotential(0)], vec![]);
+        let _ = Network::with_params(vec![NeuronValue(0)], vec![]);
     }
     
     #[test]
     #[should_panic]
     fn catch_too_little_effects() {
-        let _ = Network::with_params(vec![ActionPotential(0); 2], vec![Effect(0)]);
+        let _ = Network::with_params(vec![NeuronValue(0); 2], vec![Effect(0)]);
     }
     
     #[test]
     #[should_panic]
     fn catch_too_many_effects() {
-        let _ = Network::with_params(vec![ActionPotential(0); 2], vec![Effect(0); 6]);
+        let _ = Network::with_params(vec![NeuronValue(0); 2], vec![Effect(0); 6]);
     }
 
     #[test]
     fn test_tick() {
         let action_potentials = vec![
-            ActionPotential(0),
-            ActionPotential(16),
-            ActionPotential(-16),
+            NeuronValue(0),
+            NeuronValue(16),
+            NeuronValue(-16),
         ];
 
         let effects = vec![
@@ -363,9 +362,9 @@ mod tests {
         assert_eq!(
             net.last_accumulator_buf(),
             &[
-                ActionPotential(1),
-                ActionPotential(129),
-                ActionPotential(-8),
+                NeuronValue(1),
+                NeuronValue(129),
+                NeuronValue(-8),
             ],
         );
 
@@ -374,9 +373,9 @@ mod tests {
         assert_eq!(
             net.last_accumulator_buf(),
             &[
-                ActionPotential(-16),
-                ActionPotential(256),
-                ActionPotential(-8),
+                NeuronValue(-16),
+                NeuronValue(256),
+                NeuronValue(-8),
             ],
         );
     }
