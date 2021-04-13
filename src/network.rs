@@ -8,13 +8,13 @@ const ACCUMULATOR_BUF_COUNT: usize = 2;
 
 /// A structure containing a collection of interconnected neurons.
 pub struct Network {
-    accumulators: [Option<Vec<NeuronValue>>; ACCUMULATOR_BUF_COUNT],
+    accumulators: [Option<Box<[NeuronValue]>>; ACCUMULATOR_BUF_COUNT],
     current_cum_buf: usize,
     connection_count: usize,
 
     // parameters
-    tresholds: Vec<NeuronValue>,
-    effects: Vec<Effect>,
+    tresholds: Box<[NeuronValue]>,
+    effects: Box<[Effect]>,
 }
 
 /// A value related to the input of a neuron.
@@ -45,13 +45,15 @@ impl Network {
 
         let tresholds = iter::repeat_with(|| NeuronValue(rng.gen()))
             .take(neuron_count)
-            .collect();
+            .collect::<Vec<_>>()
+            .into();
 
         let effects = iter::repeat_with(|| Effect(rng.gen()))
             .take(effect_count)
-            .collect();
+            .collect::<Vec<_>>()
+            .into();
 
-        let accumulator_buf = vec![NeuronValue(0); neuron_count];
+        let accumulator_buf: Box<[NeuronValue]> = vec![NeuronValue(0); neuron_count].into();
         
         Self {
             accumulators: [Some(accumulator_buf.clone()), Some(accumulator_buf)],
@@ -68,14 +70,14 @@ impl Network {
     /// When `tresholds` or `effects` is empty.  
     /// When there are more tresholds than effects.  
     /// When the amount of effects per treshold is greater than the amount of tresholds.  
-    pub fn with_params(tresholds: Vec<NeuronValue>, effects: Vec<Effect>) -> Self {
+    pub fn with_params(tresholds: Box<[NeuronValue]>, effects: Box<[Effect]>) -> Self {
         let neuron_count = tresholds.len();
         assert!(neuron_count > 0);
         let connection_count = effects.len() / neuron_count;
         assert!(connection_count > 0);
         assert!(connection_count <= neuron_count);
 
-        let accumulator_buf = vec![NeuronValue(0); neuron_count];
+        let accumulator_buf: Box<[NeuronValue]> = vec![NeuronValue(0); neuron_count].into();
         
         Self {
             accumulators: [Some(accumulator_buf.clone()), Some(accumulator_buf)],
@@ -191,8 +193,8 @@ impl Network {
         };
 
         for src in 0..extent_back {
-            // safety: it is assumed parameter Vecs and accumulator buffers do not change size
-            // after construction of the network.
+            // safety: it is assumed parameter and accumulator slices do not change size
+            // after construction of the network. As that might invalidate self.connection_count
             unsafe {
                 let input = inputs.get_unchecked(src);
                 let treshold = self.tresholds.get_unchecked(src);
@@ -278,11 +280,10 @@ impl Network {
     fn advance_cum_buf(&mut self) {
         let i = (self.current_cum_buf + 1) % ACCUMULATOR_BUF_COUNT;
 
-        let mut cum = self.accumulators[i].take().unwrap();
-        let count = cum.len();
-        cum.clear();
-        cum.resize(count, NeuronValue(0));
-        self.accumulators[i] = Some(cum);
+        self.accumulators[i]
+            .as_mut()
+            .unwrap() 
+            .fill(NeuronValue(0));
 
         self.current_cum_buf = i;
     }
@@ -320,25 +321,25 @@ mod tests {
     #[test]
     #[should_panic]
     fn catch_zero_action_potentials() {
-        let _ = Network::with_params(vec![], vec![Effect(0)]);
+        let _ = Network::with_params(vec![].into(), vec![Effect(0)].into());
     }
     
     #[test]
     #[should_panic]
     fn catch_zero_effects() {
-        let _ = Network::with_params(vec![NeuronValue(0)], vec![]);
+        let _ = Network::with_params(vec![NeuronValue(0)].into(), vec![].into());
     }
     
     #[test]
     #[should_panic]
     fn catch_too_little_effects() {
-        let _ = Network::with_params(vec![NeuronValue(0); 2], vec![Effect(0)]);
+        let _ = Network::with_params(vec![NeuronValue(0); 2].into(), vec![Effect(0)].into());
     }
     
     #[test]
     #[should_panic]
     fn catch_too_many_effects() {
-        let _ = Network::with_params(vec![NeuronValue(0); 2], vec![Effect(0); 6]);
+        let _ = Network::with_params(vec![NeuronValue(0); 2].into(), vec![Effect(0); 6].into());
     }
 
     #[test]
@@ -347,13 +348,13 @@ mod tests {
             NeuronValue(0),
             NeuronValue(16),
             NeuronValue(-16),
-        ];
+        ].into();
 
         let effects = vec![
             Effect(-8), Effect(1), Effect(2),
             Effect(-17), Effect(127), Effect(0),
             Effect(127), Effect(0), Effect(0),
-        ];
+        ].into();
 
         let mut net = Network::with_params(action_potentials, effects);
 
