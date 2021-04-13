@@ -2,7 +2,7 @@
 
 use rand::prelude::*;
 
-use std::iter;
+use std::{iter, ops::Range};
 
 const ACCUMULATOR_BUF_COUNT: usize = 2;
 
@@ -89,25 +89,49 @@ impl Network {
     }
 
     /// Returns a slice of the action potentials of the neurons.
+    #[inline]
     pub fn action_potentials(&self) -> &[ActionPotential] {
         &self.action_potentials
     }
 
     /// Returns a mutable slice of the action potentials of the neurons.
+    #[inline]
     pub fn action_potentials_mut(&mut self) -> &mut [ActionPotential] {
         &mut self.action_potentials
     }
     
     /// Returns a slice of the effects of the connections between neurons.  
-    /// This is a matrix with dimensions `connection_count` x `neuron_count` where the center of 
-    /// each row (rounded to 0) is the connection of the neuron to itself. The other connections
-    /// are to adjacent neurons where the neurons are arranged in a circle.
+    /// This is a matrix with dimensions `connection_count` x `neuron_count`
+    /// where each row is the outputs to nearby neurons. At column `connection_count` / 2
+    /// the connection from the neuron to itself is stored, the other columns store 
+    /// connections to neurons before and after the neuron. You can think of neurons
+    /// being arranged in a circle.
+    /// # Examples
+    /// ```
+    /// # use ans::Network;
+    /// let net = Network::new(3, 3);
+    /// 
+    /// // print connection effects from neuron to neuron
+    /// println!("0 -> 2: {:?}", net.effects()[(0 * 3) + 0]);
+    /// println!("0 -> 0: {:?}", net.effects()[(0 * 3) + 1]);
+    /// println!("0 -> 1: {:?}", net.effects()[(0 * 3) + 2]);
+    ///
+    /// println!("1 -> 0: {:?}", net.effects()[(1 * 3) + 0]);
+    /// println!("1 -> 1: {:?}", net.effects()[(1 * 3) + 1]);
+    /// println!("1 -> 2: {:?}", net.effects()[(1 * 3) + 2]);
+    ///
+    /// println!("2 -> 1: {:?}", net.effects()[(2 * 3) + 0]);
+    /// println!("2 -> 2: {:?}", net.effects()[(2 * 3) + 1]);
+    /// println!("2 -> 0: {:?}", net.effects()[(2 * 3) + 2]);
+    /// ```
+    #[inline]
     pub fn effects(&self) -> &[Effect] {
         &self.effects
     }
 
     /// Returns a mutable slice of the effects of the connections between neurons.  
-    /// See [Network::effects] for more information.
+    /// See [Network::effects] for more information about the layout of this slice.
+    #[inline]
     pub fn effects_mut(&mut self) -> &mut [Effect] {
         &mut self.effects
     }
@@ -131,6 +155,7 @@ impl Network {
     /// // depending on the connection_count and distance between the neurons
     /// println!("Output: {}", net.last_accumulator_buf()[1].0);
     /// ```
+    #[inline]
     pub fn last_accumulator_buf(&self) -> &[ActionPotential] {
         let index = (self.current_cum_buf + ACCUMULATOR_BUF_COUNT - 1) % ACCUMULATOR_BUF_COUNT;
         self.accumulators[index].as_ref().unwrap()
@@ -138,37 +163,25 @@ impl Network {
 
     /// Returns a mutable slice of the inputs of the neurons on the last executed tick.  
     /// For more information see [Network::last_accumulator_buf].
+    #[inline]
     pub fn last_accumulator_buf_mut(&mut self) -> &mut [ActionPotential] {
         let index = (self.current_cum_buf + ACCUMULATOR_BUF_COUNT - 1) % ACCUMULATOR_BUF_COUNT;
         self.accumulators[index].as_mut().unwrap()
     }
 
     /// Execute a tick on the network, updating [Network::last_accumulator_buf]
-    #[inline]
     pub fn tick(&mut self) {
         let mut cum = self.accumulators[self.current_cum_buf].take().unwrap();
+        let inputs = self.last_accumulator_buf();
+        let neuron_count = self.action_potentials.len();
 
-        for (neuron, &value) in self.last_accumulator_buf().iter().enumerate() {
-            // safety: length of parameter vecs must not change after construction of network
-            unsafe {
-                if value >= *self.action_potentials.get_unchecked(neuron) {
-                    self.apply_effects(neuron, &mut cum);
-                }
-            }
-        }
-
-        self.accumulators[self.current_cum_buf] = Some(cum);
-        self.advance_cum_buf();
-    }
-
-    #[inline]
-    unsafe fn apply_effects(&self, neuron: usize, cum: &mut [ActionPotential]) {
         // think of the neurons as being arranged in a circle.
-        // for any given neuron, we apply effects to neurons within 
-        // a slice of this circle with a size specified by self.connection_count.
-        // the neuron is at the center of this slice and the slice cannot overlap.
+        // for any given neuron, we observe a slice of this circle with
+        // a size specified by self.connection_count where the current
+        // neuron is at the center of this slice. for each neuron in the slice, we add  
+        // the effect of it on the current neuron if the input is above the treshold.
 
-        // amount of neurons before and after current neuron (on the circle).
+        // amount of neurons before and after any neuron (on the circle).
         let extent_back = self.connection_count / 2;
         let extent_front = if extent_back == 0 {
             0
@@ -178,72 +191,90 @@ impl Network {
             extent_back - 1
         };
 
-        let (neuron_start, effect_start, count) = if neuron < extent_back {
-            // the amount of neurons appearing before index 0 on the circle
-            // is guaranteed to be at least 1
-            let back_count = extent_back - neuron;
-            let back_start = self.action_potentials.len() - back_count;
+        for src in 0..extent_back {
+            // safety: it is assumed parameter Vecs and accumulator buffers do not change size
+            // after construction of the network.
+            unsafe {
+                let input = inputs.get_unchecked(src);
+                let treshold = self.action_potentials.get_unchecked(src);
 
-            for i in 0..back_count {
-                // in this loop effect_start is 0 because it happens first.
-                // in the next loop it will continue where this loop left off.
-                self.apply_single_effect(
-                    back_start + i,
-                    neuron,
-                    0 + i,
-                    cum,
-                );
+                if input >= treshold {
+                    let wrapping_range = neuron_count - extent_back + src..neuron_count;
+                    self.apply_effects(
+                        &mut cum,
+                        src,
+                        0..self.connection_count - wrapping_range.len(),
+                        wrapping_range.len(),
+                    );
+                    self.apply_effects(
+                        &mut cum,
+                        src,
+                        wrapping_range,
+                        0,
+                    );
+                }
             }
-
-            // handle rest of effects in next loop
-            (0, back_count, self.connection_count - back_count)
-        } else if (neuron + extent_front) >= self.action_potentials.len() {
-            let front_count = (neuron + extent_front) - (self.action_potentials.len() - 1);
-            // each row in self.effects is self.connection_count long.
-            // so the last n rows start at index self.connection_count - n.
-            // n = front_count in this case
-            let front_effect_start = self.connection_count - front_count;
-
-            for i in 0..front_count {
-                self.apply_single_effect(
-                    0 + i,
-                    neuron,
-                    front_effect_start + i,
-                    cum,
-                );
-            }
-
-            // neuron >= extent_back so we can go to the start without wrapping around
-            let neuron_start = neuron - extent_back;
-            (neuron_start, 0, self.connection_count - front_count)
-        } else {
-            // whole slice fits within the array bounds
-            let neuron_start = neuron - extent_back;
-            (neuron_start, 0, self.connection_count)
-        };
-
-        for i in 0..count {
-            self.apply_single_effect(
-                neuron_start + i,
-                neuron,
-                effect_start + i,
-                cum,
-            );
         }
+
+        for src in extent_back..neuron_count - extent_front {
+            unsafe {
+                let input = inputs.get_unchecked(src);
+                let treshold = self.action_potentials.get_unchecked(src);
+
+                if input >= treshold {
+                    self.apply_effects(
+                        &mut cum,
+                        src,
+                        src - extent_back..src + extent_front + 1,
+                        0,
+                    );
+                }
+            }
+        }
+
+        for src in neuron_count - extent_front..neuron_count {
+            unsafe {
+                let input = inputs.get_unchecked(src);
+                let treshold = self.action_potentials.get_unchecked(src);
+
+                if input >= treshold {
+                    let non_wrapping_range = src - extent_back..neuron_count;
+                    self.apply_effects(
+                        &mut cum,
+                        src,
+                        0..self.connection_count - non_wrapping_range.len(),
+                        non_wrapping_range.len(),
+                    );
+                    
+                    self.apply_effects(
+                        &mut cum,
+                        src,
+                        non_wrapping_range,
+                        0,
+                    );
+                }
+            }
+        }
+
+        self.accumulators[self.current_cum_buf] = Some(cum);
+        self.advance_cum_buf();
     }
 
     #[inline]
-    unsafe fn apply_single_effect(
-        &self, 
-        dst_neuron: usize, 
-        src_neuron: usize, 
-        local_effect: usize, 
-        cum: &mut [ActionPotential]
+    unsafe fn apply_effects(
+        &self,
+        cum: &mut [ActionPotential],
+        src: usize,
+        dst_range: Range<usize>,
+        offset: usize,
     ) {
-        let effect = *self.effects.get_unchecked((src_neuron * self.connection_count) + local_effect);
-        cum.get_unchecked_mut(dst_neuron).0 += effect.0 as i32;
+        let base = (src * self.connection_count) + offset;
+        for (i, dst) in dst_range.enumerate() {
+            let effect = self.effects.get_unchecked(base + i);
+            cum.get_unchecked_mut(dst).0 += effect.0 as i32;
+        }
     }
-    
+
     #[inline]
     fn advance_cum_buf(&mut self) {
         let i = (self.current_cum_buf + 1) % ACCUMULATOR_BUF_COUNT;
@@ -318,6 +349,7 @@ mod tests {
             ActionPotential(16),
             ActionPotential(-16),
         ];
+
         let effects = vec![
             Effect(-8), Effect(1), Effect(2),
             Effect(-17), Effect(127), Effect(0),
@@ -325,20 +357,27 @@ mod tests {
         ];
 
         let mut net = Network::with_params(action_potentials, effects);
+
         net.tick();
 
-        let expected = [
-            ActionPotential(1),
-            ActionPotential(129),
-            ActionPotential(-8),
-        ];
+        assert_eq!(
+            net.last_accumulator_buf(),
+            &[
+                ActionPotential(1),
+                ActionPotential(129),
+                ActionPotential(-8),
+            ],
+        );
 
-        let result = net.last_accumulator_buf();
+        net.tick();
 
         assert_eq!(
-            result,
-            &expected,
-            "accumulator buf had unexpected contents",
+            net.last_accumulator_buf(),
+            &[
+                ActionPotential(-16),
+                ActionPotential(256),
+                ActionPotential(-8),
+            ],
         );
     }
 }
