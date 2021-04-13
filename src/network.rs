@@ -45,13 +45,11 @@ impl Network {
 
         let tresholds = iter::repeat_with(|| NeuronValue(rng.gen()))
             .take(neuron_count)
-            .collect::<Vec<_>>()
-            .into();
+            .collect();
 
         let effects = iter::repeat_with(|| Effect(rng.gen()))
             .take(effect_count)
-            .collect::<Vec<_>>()
-            .into();
+            .collect();
 
         let accumulator_buf: Box<[NeuronValue]> = vec![NeuronValue(0); neuron_count].into();
         
