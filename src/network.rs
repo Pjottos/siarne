@@ -6,6 +6,15 @@ use std::{iter, ops::Range};
 
 const ACCUMULATOR_BUF_COUNT: usize = 2;
 
+#[derive(Debug)]
+pub enum Error {
+    ZeroNeurons,
+    ZeroConnections,
+    TooManyConnections,
+    EffectCountOverflow,
+    InvalidNeuronIndex,
+}
+
 /// A structure containing a collection of interconnected neurons.
 pub struct Network {
     accumulators: [Option<Box<[NeuronValue]>>; ACCUMULATOR_BUF_COUNT],
@@ -32,17 +41,24 @@ pub struct Effect(pub i8);
 impl Network {
     /// Create a [Network] with randomly initialized parameters.  
     /// `connection_count` is the amount of inputs per neuron.
-    /// # Panics
-    /// When `neuron_count` or `connection_count` is 0.  
+    /// # Errors
+    ///   
     /// When `connection_count` > `neuron_count`.   
     /// When the result of `neuron_count * connection_count` does not fit in a [usize].  
-    pub fn new(neuron_count: usize, connection_count: usize, input_count: usize, output_count: usize) -> Self {
-        assert!(neuron_count > 0);
-        assert!(connection_count > 0);
-        assert!(connection_count <= neuron_count);
+    pub fn new(neuron_count: usize, connection_count: usize, input_count: usize, output_count: usize) -> Result<Self, Error> {
+        if neuron_count == 0 {
+            return Err(Error::ZeroNeurons);
+        }
+        if connection_count == 0 {
+            return Err(Error::ZeroConnections);
+        }
+        if connection_count > neuron_count {
+            return Err(Error::TooManyConnections);
+        }
 
-        let effect_count = neuron_count.checked_mul(connection_count)
-            .expect("neuron_count or connection_count too big");
+        let effect_count = neuron_count
+            .checked_mul(connection_count)
+            .ok_or(Error::EffectCountOverflow)?;
         
         let mut rng = thread_rng();
 
@@ -66,7 +82,7 @@ impl Network {
             
         let accumulator_buf: Box<[NeuronValue]> = vec![NeuronValue(0); neuron_count].into();
         
-        Self {
+        Ok(Self {
             accumulators: [Some(accumulator_buf.clone()), Some(accumulator_buf)],
             current_cum_buf: 0,
             connection_count,
@@ -75,34 +91,45 @@ impl Network {
             effects,
             input_neurons,
             output_neurons,
-        }
+        })
     }
 
     /// Create a [Network] with the specified parameters.
-    /// # Panics
-    /// When `tresholds` or `effects` is empty.  
-    /// When there are more tresholds than effects.  
-    /// When the amount of effects per treshold > the amount of tresholds.  
-    /// When `input_neurons` or `output_neurons` contains an index >= the amount of tresholds.  
+    /// # Errors
+    /// When `tresholds` is empty, [Error::ZeroNeurons].    
+    /// When the amount of effects per neuron is less than 1, [Error::ZeroConnections].    
+    /// When there are more connections per neuron than neurons, [Error::TooManyConnections].  
+    /// When `input_neurons` contains an out of bounds index, [Error::InvalidNeuronIndex].  
     pub fn with_params(
         tresholds: Box<[NeuronValue]>,
         effects: Box<[Effect]>,
         input_neurons: Box<[usize]>,
         output_neurons: Box<[usize]>,
-    ) -> Self {
+    ) -> Result<Self, Error> {
         let neuron_count = tresholds.len();
-        assert!(neuron_count > 0);
+        if neuron_count == 0 {
+            return Err(Error::ZeroNeurons);
+        }
 
         let connection_count = effects.len() / neuron_count;
-        assert!(connection_count > 0);
-        assert!(connection_count <= neuron_count);
+        if connection_count == 0 {
+            return Err(Error::ZeroConnections);
+        }
 
-        assert!(input_neurons.iter().copied().all(|i| i < neuron_count));
-        assert!(output_neurons.iter().copied().all(|i| i < neuron_count));
+        if connection_count > neuron_count {
+            return Err(Error::TooManyConnections);
+        }
+
+        if !(
+            input_neurons.iter().copied().all(|i| i < neuron_count) &&
+            output_neurons.iter().copied().all(|i| i < neuron_count)
+        ) {
+            return Err(Error::InvalidNeuronIndex);
+        }
 
         let accumulator_buf: Box<[NeuronValue]> = vec![NeuronValue(0); neuron_count].into();
         
-        Self {
+        Ok(Self {
             accumulators: [Some(accumulator_buf.clone()), Some(accumulator_buf)],
             current_cum_buf: 0,
             connection_count,
@@ -111,7 +138,7 @@ impl Network {
             effects,
             input_neurons,
             output_neurons,
-        }
+        })
     }
 
     /// Returns a slice of the activation tresholds of the neurons.
@@ -135,7 +162,7 @@ impl Network {
     /// # Examples
     /// ```
     /// # use ans::Network;
-    /// let net = Network::new(3, 3, 0, 0);
+    /// let net = Network::new(3, 3, 0, 0).unwrap();
     /// 
     /// // print connection effects from neuron to neuron
     /// println!("0 -> 2: {:?}", net.effects()[(0 * 3) + 0]);
@@ -335,94 +362,51 @@ mod tests {
     use super::*;
 
     #[test]
-    #[should_panic]
-    fn catch_zero_neuron_count() {
-        let _ = Network::new(0, 1, 0, 0);
-    }
-    
-    #[test]
-    #[should_panic]
-    fn catch_zero_connection_count() {
-        let _ = Network::new(1, 0, 0, 0);
-    }
-    
-    #[test]
-    #[should_panic]
-    fn catch_invalid_connection_count() {
-        let _ = Network::new(1, 2, 0, 0);
-    }
+    fn input_validation() {
+        match Network::new(0, 1, 0, 0) {
+            Err(Error::ZeroNeurons) => (),
+            _ => panic!(),
+        }
 
-    #[test]
-    #[should_panic]
-    fn catch_effect_count_overflow() {
-        let max = usize::MAX;
-        let _ = Network::new(max, 2, 0, 0);
-    }
+        match Network::new(1, 0, 0, 0) {
+            Err(Error::ZeroConnections) => (),
+            _ => panic!(),
+        }
 
-    #[test]
-    #[should_panic]
-    fn catch_zero_tresholds() {
-        let _ = Network::with_params(
-            vec![].into(),
-            vec![Effect(0)].into(),
-            vec![].into(),
-            vec![].into(),
-        );
-    }
-    
-    #[test]
-    #[should_panic]
-    fn catch_zero_effects() {
-        let _ = Network::with_params(
-            vec![NeuronValue(0)].into(),
-            vec![].into(),
-            vec![].into(),
-            vec![].into(),
-        );
-    }
-    
-    #[test]
-    #[should_panic]
-    fn catch_too_little_effects() {
-        let _ = Network::with_params(
-            vec![NeuronValue(0); 2].into(),
-            vec![Effect(0)].into(),
-            vec![].into(),
-            vec![].into(),
-        );
-    }
-    
-    #[test]
-    #[should_panic]
-    fn catch_too_many_effects() {
-        let _ = Network::with_params(
-            vec![NeuronValue(0); 2].into(),
-            vec![Effect(0); 6].into(),
-            vec![].into(),
-            vec![].into(),
-        );
-    }
+        match Network::new(1, 2, 0, 0) {
+            Err(Error::TooManyConnections) => (),
+            _ => panic!(),
+        }
 
-    #[test]
-    #[should_panic]
-    fn catch_invalid_input_index() {
-        let _ = Network::with_params(
-            vec![NeuronValue(0); 2].into(),
-            vec![Effect(0); 6].into(),
-            vec![2usize].into(),
-            vec![].into(),
-        );
-    }
+        match Network::new(usize::MAX, 2, 0, 0) {
+            Err(Error::EffectCountOverflow) => (),
+            _ => panic!(),
+        }
 
-    #[test]
-    #[should_panic]
-    fn catch_invalid_output_index() {
-        let _ = Network::with_params(
-            vec![NeuronValue(0); 2].into(),
-            vec![Effect(0); 6].into(),
-            vec![].into(),
-            vec![2usize].into(),
-        );
+        match Network::with_params(vec![].into(), vec![Effect(0)].into(), vec![].into(), vec![].into()) {
+            Err(Error::ZeroNeurons) => (),
+            _ => panic!(),
+        }
+
+        match Network::with_params(vec![NeuronValue(0); 2].into(), vec![Effect(0)].into(), vec![].into(), vec![].into()) {
+            Err(Error::ZeroConnections) => (),
+            _ => panic!(),
+        }
+
+        match Network::with_params(vec![NeuronValue(0); 2].into(), vec![Effect(0); 6].into(), vec![].into(), vec![].into()) {
+            Err(Error::TooManyConnections) => (),
+            _ => panic!(),
+        }
+
+        match Network::with_params(vec![NeuronValue(0); 2].into(), vec![Effect(0); 4].into(), vec![2usize].into(), vec![].into()) {
+            Err(Error::InvalidNeuronIndex) => (),
+            _ => panic!(),
+        }
+
+        match Network::with_params(vec![NeuronValue(0); 2].into(), vec![Effect(0); 4].into(), vec![].into(), vec![2usize].into()) {
+            Err(Error::InvalidNeuronIndex) => (),
+            _ => panic!(),
+        }
     }
 
     #[test]
@@ -455,7 +439,7 @@ mod tests {
             effects,
             input_neurons,
             output_neurons,
-        );
+        ).unwrap();
 
         // first evaluate 2 ticks for expected output
         net.tick();
