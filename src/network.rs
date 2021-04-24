@@ -15,19 +15,6 @@ pub enum Error {
     InvalidNeuronIndex,
 }
 
-/// A structure containing a collection of interconnected neurons.
-pub struct Network {
-    accumulators: [Option<Box<[NeuronValue]>>; ACCUMULATOR_BUF_COUNT],
-    current_cum_buf: usize,
-    connection_count: usize,
-
-    // parameters
-    tresholds: Box<[NeuronValue]>,
-    effects: Box<[Effect]>,
-    input_neurons: Box<[usize]>,
-    output_neurons: Box<[usize]>,
-}
-
 /// A value related to the input of a neuron.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Default)]
 pub struct NeuronValue(pub i32);
@@ -37,6 +24,51 @@ pub struct NeuronValue(pub i32);
 /// are one-directional.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Default)]
 pub struct Effect(pub i8);
+
+#[derive(Clone)]
+pub struct NetworkParams {
+    pub tresholds: Box<[NeuronValue]>,
+    /// This is a matrix with dimensions `connection_count` x `neuron_count`
+    /// where each row is the outputs to nearby neurons. At column `connection_count` / 2
+    /// the connection from the neuron to itself is stored, the other columns store 
+    /// connections to neurons before and after the neuron. You can think of neurons
+    /// being arranged in a circle.
+    /// # Examples
+    /// ```
+    /// # use ans::network::{NetworkParams, NeuronValue, Effect};
+    /// // create dummy params with 3 neurons and 3 connections per neuron
+    /// let params = NetworkParams {
+    ///     tresholds: vec![NeuronValue(0); 3].into(),
+    ///     effects: vec![Effect(0); 3 * 3].into(),
+    ///     input_neurons: vec![].into(),
+    ///     output_neurons: vec![].into(),
+    /// };
+    /// 
+    /// // print connection effects from neuron to neuron
+    /// println!("0 -> 2: {:?}", params.effects[(0 * 3) + 0]);
+    /// println!("0 -> 0: {:?}", params.effects[(0 * 3) + 1]);
+    /// println!("0 -> 1: {:?}", params.effects[(0 * 3) + 2]);
+    ///
+    /// println!("1 -> 0: {:?}", params.effects[(1 * 3) + 0]);
+    /// println!("1 -> 1: {:?}", params.effects[(1 * 3) + 1]);
+    /// println!("1 -> 2: {:?}", params.effects[(1 * 3) + 2]);
+    ///
+    /// println!("2 -> 1: {:?}", params.effects[(2 * 3) + 0]);
+    /// println!("2 -> 2: {:?}", params.effects[(2 * 3) + 1]);
+    /// println!("2 -> 0: {:?}", params.effects[(2 * 3) + 2]);
+    /// ```
+    pub effects: Box<[Effect]>,
+    pub input_neurons: Box<[usize]>,
+    pub output_neurons: Box<[usize]>,
+}
+
+/// A structure containing a collection of interconnected neurons.
+pub struct Network {
+    accumulators: [Option<Box<[NeuronValue]>>; ACCUMULATOR_BUF_COUNT],
+    current_cum_buf: usize,
+    connection_count: usize,
+    params: NetworkParams,
+}
 
 impl Network {
     /// Create a [Network] with randomly initialized parameters.  
@@ -81,17 +113,20 @@ impl Network {
             .take(output_count)
             .collect();
             
+        let params = NetworkParams {
+            tresholds,
+            effects,
+            input_neurons,
+            output_neurons,
+        };
+
         let accumulator_buf: Box<[NeuronValue]> = vec![NeuronValue(0); neuron_count].into();
         
         Ok(Self {
             accumulators: [Some(accumulator_buf.clone()), Some(accumulator_buf)],
             current_cum_buf: 0,
             connection_count,
-            
-            tresholds,
-            effects,
-            input_neurons,
-            output_neurons,
+            params            
         })
     }
 
@@ -101,18 +136,13 @@ impl Network {
     /// When the amount of effects per neuron is less than 1, [Error::ZeroConnections].    
     /// When there are more connections per neuron than neurons, [Error::TooManyConnections].  
     /// When `input_neurons` contains an out of bounds index, [Error::InvalidNeuronIndex].  
-    pub fn with_params(
-        tresholds: Box<[NeuronValue]>,
-        effects: Box<[Effect]>,
-        input_neurons: Box<[usize]>,
-        output_neurons: Box<[usize]>,
-    ) -> Result<Self, Error> {
-        let neuron_count = tresholds.len();
+    pub fn with_params(params: NetworkParams) -> Result<Self, Error> {
+        let neuron_count = params.tresholds.len();
         if neuron_count == 0 {
             return Err(Error::ZeroNeurons);
         }
 
-        let connection_count = effects.len() / neuron_count;
+        let connection_count = params.effects.len() / neuron_count;
         if connection_count == 0 {
             return Err(Error::ZeroConnections);
         }
@@ -122,8 +152,8 @@ impl Network {
         }
 
         if !(
-            input_neurons.iter().copied().all(|i| i < neuron_count) &&
-            output_neurons.iter().copied().all(|i| i < neuron_count)
+            params.input_neurons.iter().copied().all(|i| i < neuron_count) &&
+            params.output_neurons.iter().copied().all(|i| i < neuron_count)
         ) {
             return Err(Error::InvalidNeuronIndex);
         }
@@ -134,73 +164,31 @@ impl Network {
             accumulators: [Some(accumulator_buf.clone()), Some(accumulator_buf)],
             current_cum_buf: 0,
             connection_count,
-            
-            tresholds,
-            effects,
-            input_neurons,
-            output_neurons,
+            params    
         })
     }
 
-    /// Returns a slice of the activation tresholds of the neurons.
-    #[inline]
-    pub fn tresholds(&self) -> &[NeuronValue] {
-        &self.tresholds
+    /// Consume the network, returning the parameters.
+    pub fn extract_params(self) -> NetworkParams {
+        self.params
     }
 
-    /// Returns a mutable slice of the activation tresholds of the neurons.
-    #[inline]
-    pub fn tresholds_mut(&mut self) -> &mut [NeuronValue] {
-        &mut self.tresholds
-    }
-    
-    /// Returns a slice of the effects of the connections between neurons.  
-    /// This is a matrix with dimensions `connection_count` x `neuron_count`
-    /// where each row is the outputs to nearby neurons. At column `connection_count` / 2
-    /// the connection from the neuron to itself is stored, the other columns store 
-    /// connections to neurons before and after the neuron. You can think of neurons
-    /// being arranged in a circle.
-    /// # Examples
-    /// ```
-    /// # use ans::Network;
-    /// let net = Network::new(3, 3, 0, 0).unwrap();
-    /// 
-    /// // print connection effects from neuron to neuron
-    /// println!("0 -> 2: {:?}", net.effects()[(0 * 3) + 0]);
-    /// println!("0 -> 0: {:?}", net.effects()[(0 * 3) + 1]);
-    /// println!("0 -> 1: {:?}", net.effects()[(0 * 3) + 2]);
-    ///
-    /// println!("1 -> 0: {:?}", net.effects()[(1 * 3) + 0]);
-    /// println!("1 -> 1: {:?}", net.effects()[(1 * 3) + 1]);
-    /// println!("1 -> 2: {:?}", net.effects()[(1 * 3) + 2]);
-    ///
-    /// println!("2 -> 1: {:?}", net.effects()[(2 * 3) + 0]);
-    /// println!("2 -> 2: {:?}", net.effects()[(2 * 3) + 1]);
-    /// println!("2 -> 0: {:?}", net.effects()[(2 * 3) + 2]);
-    /// ```
-    #[inline]
-    pub fn effects(&self) -> &[Effect] {
-        &self.effects
-    }
-
-    /// Returns a mutable slice of the effects of the connections between neurons.  
-    /// See [Network::effects] for more information about the layout of this slice.
-    #[inline]
-    pub fn effects_mut(&mut self) -> &mut [Effect] {
-        &mut self.effects
+    /// Returns a reference to this [Network]'s parameters
+    pub fn params(&self) -> &NetworkParams {
+        &self.params
     }
 
     /// Applies the specified inputs to the neurons designated as input neurons, in order.  
     /// # Panics
     /// When `inputs.len()` is not equal to the input neuron count.  
     pub fn apply_inputs(&mut self, inputs: &[NeuronValue]) {
-        assert_eq!(self.input_neurons.len(), inputs.len());
+        assert_eq!(self.params.input_neurons.len(), inputs.len());
 
         let cum = self.accumulators[self.last_accumulator_buf_index()]
             .as_mut()
             .unwrap();
 
-        self.input_neurons
+        self.params.input_neurons
             .iter()
             .copied()
             .zip(inputs.iter().copied())
@@ -215,11 +203,11 @@ impl Network {
     /// # Panics
     /// When `outputs.len()` is not equal to the output neuron count.  
     pub fn read_outputs(&self, outputs: &mut [NeuronValue]) {
-        assert_eq!(self.output_neurons.len(), outputs.len());
+        assert_eq!(self.params.output_neurons.len(), outputs.len());
 
         let cum = self.last_accumulator_buf();
 
-        self.output_neurons
+        self.params.output_neurons
             .iter()
             .copied()
             .zip(outputs.iter_mut())
@@ -236,7 +224,7 @@ impl Network {
     pub fn tick(&mut self) {
         let mut cum = self.accumulators[self.current_cum_buf].take().unwrap();
         let inputs = self.last_accumulator_buf();
-        let neuron_count = self.tresholds.len();
+        let neuron_count = self.params.tresholds.len();
 
         // think of the neurons as being arranged in a circle.
         // for any given neuron, we observe a slice of this circle with
@@ -259,7 +247,7 @@ impl Network {
             // after construction of the network. Unless self.connection_count is updated as well.
             unsafe {
                 let input = inputs.get_unchecked(src);
-                let treshold = self.tresholds.get_unchecked(src);
+                let treshold = self.params.tresholds.get_unchecked(src);
 
                 if input >= treshold {
                     let wrapping_range = neuron_count - extent_back + src..neuron_count;
@@ -282,7 +270,7 @@ impl Network {
         for src in extent_back..neuron_count - extent_front {
             unsafe {
                 let input = inputs.get_unchecked(src);
-                let treshold = self.tresholds.get_unchecked(src);
+                let treshold = self.params.tresholds.get_unchecked(src);
 
                 if input >= treshold {
                     self.apply_effects(
@@ -298,7 +286,7 @@ impl Network {
         for src in neuron_count - extent_front..neuron_count {
             unsafe {
                 let input = inputs.get_unchecked(src);
-                let treshold = self.tresholds.get_unchecked(src);
+                let treshold = self.params.tresholds.get_unchecked(src);
 
                 if input >= treshold {
                     let non_wrapping_range = src - extent_back..neuron_count;
@@ -342,7 +330,7 @@ impl Network {
     ) {
         let base = (src * self.connection_count) + offset;
         for (i, dst) in dst_range.enumerate() {
-            let effect = self.effects.get_unchecked(base + i);
+            let effect = self.params.effects.get_unchecked(base + i);
             cum.get_unchecked_mut(dst).0 += effect.0 as i32;
         }
     }
@@ -386,27 +374,57 @@ mod tests {
             _ => panic!(),
         }
 
-        match Network::with_params(vec![].into(), vec![Effect(0)].into(), vec![].into(), vec![].into()) {
+        let params = NetworkParams {
+            tresholds: vec![].into(),
+            effects: vec![Effect(0)].into(),
+            input_neurons: vec![].into(),
+            output_neurons: vec![].into(),
+        };
+        match Network::with_params(params) {
             Err(Error::ZeroNeurons) => (),
             _ => panic!(),
         }
 
-        match Network::with_params(vec![NeuronValue(0); 2].into(), vec![Effect(0)].into(), vec![].into(), vec![].into()) {
+        let params = NetworkParams {
+            tresholds: vec![NeuronValue(0); 2].into(),
+            effects: vec![Effect(0)].into(),
+            input_neurons: vec![].into(),
+            output_neurons: vec![].into(),
+        };
+        match Network::with_params(params) {
             Err(Error::ZeroConnections) => (),
             _ => panic!(),
         }
 
-        match Network::with_params(vec![NeuronValue(0); 2].into(), vec![Effect(0); 6].into(), vec![].into(), vec![].into()) {
+        let params = NetworkParams {
+            tresholds: vec![NeuronValue(0); 2].into(),
+            effects: vec![Effect(0); 6].into(),
+            input_neurons: vec![].into(),
+            output_neurons: vec![].into(),
+        };
+        match Network::with_params(params) {
             Err(Error::TooManyConnections) => (),
             _ => panic!(),
         }
 
-        match Network::with_params(vec![NeuronValue(0); 2].into(), vec![Effect(0); 4].into(), vec![2usize].into(), vec![].into()) {
+        let params = NetworkParams {
+            tresholds: vec![NeuronValue(0); 2].into(),
+            effects: vec![Effect(0); 4].into(),
+            input_neurons: vec![2usize].into(),
+            output_neurons: vec![].into(),
+        };
+        match Network::with_params(params) {
             Err(Error::InvalidNeuronIndex) => (),
             _ => panic!(),
         }
 
-        match Network::with_params(vec![NeuronValue(0); 2].into(), vec![Effect(0); 4].into(), vec![].into(), vec![2usize].into()) {
+        let params = NetworkParams {
+            tresholds: vec![NeuronValue(0); 2].into(),
+            effects: vec![Effect(0); 4].into(),
+            input_neurons: vec![].into(),
+            output_neurons: vec![2usize].into(),
+        };
+        match Network::with_params(params) {
             Err(Error::InvalidNeuronIndex) => (),
             _ => panic!(),
         }
@@ -414,7 +432,7 @@ mod tests {
 
     #[test]
     fn tick_io() {
-        let action_potentials = vec![
+        let tresholds = vec![
             NeuronValue(0),
             NeuronValue(16),
             NeuronValue(-16),
@@ -437,12 +455,12 @@ mod tests {
             1,
         ].into();
 
-        let mut net = Network::with_params(
-            action_potentials,
+        let mut net = Network::with_params(NetworkParams {
+            tresholds,
             effects,
             input_neurons,
             output_neurons,
-        ).unwrap();
+        }).unwrap();
 
         // first evaluate 2 ticks for expected output
         net.tick();

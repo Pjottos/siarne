@@ -1,4 +1,4 @@
-use crate::network::{self, Network, NeuronValue, Effect};
+use crate::network::{self, Effect, Network, NetworkParams, NeuronValue};
 
 use rand::{prelude::*, distributions};
 use rand_chacha::ChaCha8Rng;
@@ -26,7 +26,7 @@ pub struct NoisePassParams {
 /// | 3       | 0.20 | 0.11  | 0.06  | 0.04  |  
 /// ```
 pub fn apply_parameter_noise(
-    net: &mut Network, 
+    params: &mut NetworkParams, 
     seed: u64,
     power: u8,
 ) {
@@ -46,7 +46,7 @@ pub fn apply_parameter_noise(
         (unsigned / 2) as i64 * sign
     };
     
-    for effect in net.effects_mut().iter_mut() {
+    for effect in params.effects.iter_mut() {
         let noise = offset()
             .clamp(i8::MIN as i64, i8::MAX as i64) as i8;
         // saturating add because a small offset should never cause a huge difference in
@@ -54,7 +54,7 @@ pub fn apply_parameter_noise(
         effect.0 = effect.0.saturating_add(noise);
     }
 
-    for treshold in net.tresholds_mut().iter_mut() {
+    for treshold in params.tresholds.iter_mut() {
         let noise = offset()
             .clamp(i32::MIN as i64, i32::MAX as i64) as i32;
         treshold.0 = treshold.0.saturating_add(noise);
@@ -121,13 +121,18 @@ where
         .take(output_count)
         .collect();
 
-    let mut net = Network::with_params(tresholds, effects, input_neurons, output_neurons)?;
+    let mut params = NetworkParams {
+        tresholds,
+        effects,
+        input_neurons,
+        output_neurons,
+    };
 
     for pass in passes {
-        apply_parameter_noise(&mut net, pass.seed, pass.power);
+        apply_parameter_noise(&mut params, pass.seed, pass.power);
     }
 
-    Ok(net)
+    Network::with_params(params)
 }
 
 #[cfg(test)]
@@ -142,7 +147,7 @@ mod tests {
         let net = build_network_from_noise(16, 2, 4, 4, 1234, passes).unwrap();
 
         assert_eq!(
-            net.tresholds(),
+            net.params().tresholds.as_ref(),
             &[
                 NeuronValue(-1278279962),
                 NeuronValue(1657864061),
@@ -164,7 +169,7 @@ mod tests {
         );
 
         assert_eq!(
-            net.effects(),
+            net.params().effects.as_ref(),
             &[
                 Effect(117), Effect(-128),
                 Effect(-102), Effect(124),
