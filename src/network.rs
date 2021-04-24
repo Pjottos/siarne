@@ -42,9 +42,10 @@ impl Network {
     /// Create a [Network] with randomly initialized parameters.  
     /// `connection_count` is the amount of inputs per neuron.
     /// # Errors
-    ///   
-    /// When `connection_count` > `neuron_count`.   
-    /// When the result of `neuron_count * connection_count` does not fit in a [usize].  
+    /// When `neuron_count` is 0, [Error::ZeroNeurons].
+    /// When `connection_count` is 0, [Error::ZeroConnections].
+    /// When `connection_count` > `neuron_count`, [Error::TooManyConnections].   
+    /// When the result of `neuron_count * connection_count` does not fit in a [usize], [Error::EffectCountOverflow].  
     pub fn new(neuron_count: usize, connection_count: usize, input_count: usize, output_count: usize) -> Result<Self, Error> {
         if neuron_count == 0 {
             return Err(Error::ZeroNeurons);
@@ -229,7 +230,9 @@ impl Network {
             });
     }
 
-    /// Execute a tick on the network, evaluating each neuron.
+    /// Execute a tick on the network, evaluating each neuron and applying effects to other neurons if it fires.  
+    /// Only the result of the last tick is considered, i.e the effects are applied on a zeroed buffer,
+    /// but whether to apply an effect or not is determined by looking at the buffer from the last tick.
     pub fn tick(&mut self) {
         let mut cum = self.accumulators[self.current_cum_buf].take().unwrap();
         let inputs = self.last_accumulator_buf();
@@ -253,7 +256,7 @@ impl Network {
 
         for src in 0..extent_back {
             // safety: it is assumed parameter and accumulator slices do not change size
-            // after construction of the network. As that might invalidate self.connection_count
+            // after construction of the network. Unless self.connection_count is updated as well.
             unsafe {
                 let input = inputs.get_unchecked(src);
                 let treshold = self.tresholds.get_unchecked(src);
