@@ -1,4 +1,4 @@
-use ans::Network;
+use siarne::Network;
 use criterion::{criterion_group, criterion_main, Criterion, black_box};
 
 
