@@ -13,7 +13,7 @@ pub struct NoisePassParams {
 }
 
 /// Apply noise to the parameters of a [Network].
-/// This process is deterministic.  
+/// This process uses integer math only and should therefore be deterministic.  
 /// `power` is a value related to the magnitude of the noise.
 /// The higher this value, the more the network parameters will change on average.
 /// The following table gives an estimate of the probabilities of certain offsets on the parameters  
@@ -25,11 +25,15 @@ pub struct NoisePassParams {
 /// | 2       | 0.25 | 0.12  | 0.06  | 0.04  |  
 /// | 3       | 0.20 | 0.11  | 0.06  | 0.04  |  
 /// ```
+/// For the input/output neuron parameters this number is divided by some constant to make changes
+/// to them less extreme.
 pub fn apply_parameter_noise(
     params: &mut NetworkParams, 
     seed: u64,
     power: u8,
 ) {
+    const IO_NEURON_OFFSET_DIVISOR: isize = 4;
+
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
     let dist = distributions::Uniform::from(u64::MIN..=u64::MAX);
     let p = power as u64;
@@ -59,7 +63,33 @@ pub fn apply_parameter_noise(
             .clamp(i32::MIN as i64, i32::MAX as i64) as i32;
         treshold.0 = treshold.0.saturating_add(noise);
     }
+
+    let neuron_count = params.tresholds.len();
+    for input_neuron in params.input_neurons.iter_mut() {
+        let noise = offset()
+            .clamp(isize::MIN as i64, isize::MAX as i64) as isize
+            / IO_NEURON_OFFSET_DIVISOR;
+        
+        // TODO: what if this overflows?
+        if noise < 0 {
+            *input_neuron = (*input_neuron + ((noise * -1) as usize % neuron_count)) % neuron_count;
+        } else {
+            *input_neuron = (*input_neuron + (noise as usize % neuron_count)) % neuron_count;
+        }
+    }
     
+    for output_neuron in params.output_neurons.iter_mut() {
+        let noise = offset()
+            .clamp(isize::MIN as i64, isize::MAX as i64) as isize
+            / IO_NEURON_OFFSET_DIVISOR;
+        
+        if noise < 0 {
+            *output_neuron = (*output_neuron + ((noise * -1) as usize % neuron_count)) % neuron_count;
+        } else {
+            *output_neuron = (*output_neuron + (noise as usize % neuron_count)) % neuron_count;
+        }
+    }
+
     // let tmp: Vec<_> = std::iter::repeat_with(|| offset())
     //     .take(655360)
     //     .collect();
@@ -144,7 +174,7 @@ mod tests {
         let passes = (0..=u8::MAX)
             .map(|i| NoisePassParams { seed: i as u64 + 1234, power: u8::MAX - i });
 
-        let net = build_network_from_noise(16, 2, 4, 4, 1234, passes).unwrap();
+        let net = build_network_from_noise(16, 2, 10, 10, 1234, passes).unwrap();
 
         assert_eq!(
             net.params().tresholds.as_ref(),
@@ -190,5 +220,36 @@ mod tests {
             ],
         );
 
+        assert_eq!(
+            net.params().input_neurons.as_ref(),
+            &[
+                15,
+                9,
+                4,
+                3,
+                5,
+                14,
+                0,
+                6,
+                3,
+                8,
+            ],
+        );
+
+        assert_eq!(
+            net.params().output_neurons.as_ref(),
+            &[
+                12,
+                8,
+                2,
+                12,
+                14,
+                11,
+                14,
+                14,
+                11,
+                2,
+            ],
+        );
     }
 }
