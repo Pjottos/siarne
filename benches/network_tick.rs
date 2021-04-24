@@ -6,7 +6,7 @@ fn run_bench(c: &mut Criterion) {
     // let mut net = Network::new(1024, 128);
     // c.bench_function("net 1024 128", |b| b.iter(|| net.tick()));
 
-    let mut net = black_box(Network::new(4096, 1024));
+    let mut net = black_box(Network::new(4096, 1024, 0, 0));
     c.bench_function("net 4096 1024", |b| b.iter(|| net.tick()));
 }
 

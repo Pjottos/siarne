@@ -3,6 +3,8 @@ use crate::{Network, network::{NeuronValue, Effect}};
 use rand::{prelude::*, distributions};
 use rand_chacha::ChaCha8Rng;
 
+use std::iter;
+
 /// Parameters for a noise pass, see [build_network_from_noise].
 #[derive(Debug, Clone, Copy)]
 pub struct NoisePassParams {
@@ -88,6 +90,8 @@ pub fn apply_parameter_noise(
 pub fn build_network_from_noise<Is>(
     neuron_count: usize,
     connection_count: usize,
+    input_count: usize,
+    output_count: usize,
     seed: u64,
     passes: Is,
 ) -> Network
@@ -95,15 +99,23 @@ where
     Is: Iterator<Item = NoisePassParams>
 {
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
-    let tresholds = std::iter::repeat_with(|| NeuronValue(rng.gen()))
+
+    let tresholds = iter::repeat_with(|| NeuronValue(rng.gen()))
         .take(neuron_count)
         .collect();
-    
-    let effects = std::iter::repeat_with(|| Effect(rng.gen()))
+    let effects = iter::repeat_with(|| Effect(rng.gen()))
         .take(neuron_count.checked_mul(connection_count).unwrap())
         .collect();
     
-    let mut net = Network::with_params(tresholds, effects);
+    let neuron_dist = distributions::Uniform::from(0..neuron_count);
+    let input_neurons = iter::repeat_with(|| neuron_dist.sample(&mut rng))
+        .take(input_count)
+        .collect();
+    let output_neurons = iter::repeat_with(|| neuron_dist.sample(&mut rng))
+        .take(output_count)
+        .collect();
+
+    let mut net = Network::with_params(tresholds, effects, input_neurons, output_neurons);
 
     for pass in passes {
         apply_parameter_noise(&mut net, pass.seed, pass.power);
@@ -121,7 +133,7 @@ mod tests {
         let passes = (0..=u8::MAX)
             .map(|i| NoisePassParams { seed: i as u64 + 1234, power: u8::MAX - i });
 
-        let net = build_network_from_noise(16, 2, 1234, passes);
+        let net = build_network_from_noise(16, 2, 4, 4, 1234, passes);
 
         assert_eq!(
             net.tresholds(),
@@ -166,5 +178,6 @@ mod tests {
                 Effect(95), Effect(-128),
             ],
         );
+
     }
 }

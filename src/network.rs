@@ -15,6 +15,8 @@ pub struct Network {
     // parameters
     tresholds: Box<[NeuronValue]>,
     effects: Box<[Effect]>,
+    input_neurons: Box<[usize]>,
+    output_neurons: Box<[usize]>,
 }
 
 /// A value related to the input of a neuron.
@@ -34,13 +36,14 @@ impl Network {
     /// When `neuron_count` or `connection_count` is 0.  
     /// When `connection_count` > `neuron_count`.   
     /// When the result of `neuron_count * connection_count` does not fit in a [usize].  
-    pub fn new(neuron_count: usize, connection_count: usize) -> Self {
+    pub fn new(neuron_count: usize, connection_count: usize, input_count: usize, output_count: usize) -> Self {
         assert!(neuron_count > 0);
         assert!(connection_count > 0);
         assert!(connection_count <= neuron_count);
+
         let effect_count = neuron_count.checked_mul(connection_count)
             .expect("neuron_count or connection_count too big");
-
+        
         let mut rng = thread_rng();
 
         let tresholds = iter::repeat_with(|| NeuronValue(rng.gen()))
@@ -50,16 +53,28 @@ impl Network {
         let effects = iter::repeat_with(|| Effect(rng.gen()))
             .take(effect_count)
             .collect();
+        
+        let neuron_dist = rand::distributions::Uniform::from(0..neuron_count);
 
+        let input_neurons = iter::repeat_with(|| neuron_dist.sample(&mut rng))
+            .take(input_count)
+            .collect();
+
+        let output_neurons = iter::repeat_with(|| neuron_dist.sample(&mut rng))
+            .take(output_count)
+            .collect();
+            
         let accumulator_buf: Box<[NeuronValue]> = vec![NeuronValue(0); neuron_count].into();
         
         Self {
             accumulators: [Some(accumulator_buf.clone()), Some(accumulator_buf)],
             current_cum_buf: 0,
-            connection_count: connection_count,
+            connection_count,
             
             tresholds,
             effects,
+            input_neurons,
+            output_neurons,
         }
     }
 
@@ -67,13 +82,23 @@ impl Network {
     /// # Panics
     /// When `tresholds` or `effects` is empty.  
     /// When there are more tresholds than effects.  
-    /// When the amount of effects per treshold is greater than the amount of tresholds.  
-    pub fn with_params(tresholds: Box<[NeuronValue]>, effects: Box<[Effect]>) -> Self {
+    /// When the amount of effects per treshold > the amount of tresholds.  
+    /// When `input_neurons` or `output_neurons` contains an index >= the amount of tresholds.  
+    pub fn with_params(
+        tresholds: Box<[NeuronValue]>,
+        effects: Box<[Effect]>,
+        input_neurons: Box<[usize]>,
+        output_neurons: Box<[usize]>,
+    ) -> Self {
         let neuron_count = tresholds.len();
         assert!(neuron_count > 0);
+
         let connection_count = effects.len() / neuron_count;
         assert!(connection_count > 0);
         assert!(connection_count <= neuron_count);
+
+        assert!(input_neurons.iter().copied().all(|i| i < neuron_count));
+        assert!(output_neurons.iter().copied().all(|i| i < neuron_count));
 
         let accumulator_buf: Box<[NeuronValue]> = vec![NeuronValue(0); neuron_count].into();
         
@@ -84,16 +109,18 @@ impl Network {
             
             tresholds,
             effects,
+            input_neurons,
+            output_neurons,
         }
     }
 
-    /// Returns a slice of the fire tresholds of the neurons.
+    /// Returns a slice of the activation tresholds of the neurons.
     #[inline]
     pub fn tresholds(&self) -> &[NeuronValue] {
         &self.tresholds
     }
 
-    /// Returns a mutable slice of the fire tresholds of the neurons.
+    /// Returns a mutable slice of the activation tresholds of the neurons.
     #[inline]
     pub fn tresholds_mut(&mut self) -> &mut [NeuronValue] {
         &mut self.tresholds
@@ -108,7 +135,7 @@ impl Network {
     /// # Examples
     /// ```
     /// # use ans::Network;
-    /// let net = Network::new(3, 3);
+    /// let net = Network::new(3, 3, 0, 0);
     /// 
     /// // print connection effects from neuron to neuron
     /// println!("0 -> 2: {:?}", net.effects()[(0 * 3) + 0]);
@@ -135,40 +162,47 @@ impl Network {
         &mut self.effects
     }
 
-    /// Returns a slice of the inputs of the neurons on the last executed tick.  
-    /// These values will be used in the next tick to determine which neurons should fire.
-    /// The values can also be used to extract output from the network by reading the values
-    /// at arbitrary indices so long as the same indices are used each time. 
-    /// # Examples
-    /// ```
-    /// # use ans::Network;
-    /// let mut net = Network::new(16, 2);
-    /// 
-    /// // introduce information from outside the network
-    /// net.last_accumulator_buf_mut()[0].0 += 123; 
-    ///
-    /// net.tick();
-    ///
-    /// // keep in mind it might take multiple ticks for the
-    /// // input introduced at one neuron to propagate to the output
-    /// // depending on the connection_count and distance between the neurons
-    /// println!("Output: {}", net.last_accumulator_buf()[1].0);
-    /// ```
-    #[inline]
-    pub fn last_accumulator_buf(&self) -> &[NeuronValue] {
-        let index = (self.current_cum_buf + ACCUMULATOR_BUF_COUNT - 1) % ACCUMULATOR_BUF_COUNT;
-        self.accumulators[index].as_ref().unwrap()
+    /// Applies the specified inputs to the neurons designated as input neurons, in order.  
+    /// # Panics
+    /// When `inputs.len()` is not equal to the input neuron count.  
+    pub fn apply_inputs(&mut self, inputs: &[NeuronValue]) {
+        assert_eq!(self.input_neurons.len(), inputs.len());
+
+        let cum = self.accumulators[self.last_accumulator_buf_index()]
+            .as_mut()
+            .unwrap();
+
+        self.input_neurons
+            .iter()
+            .copied()
+            .zip(inputs.iter().copied())
+            .for_each(|(neuron, input)| {
+                unsafe {
+                    cum.get_unchecked_mut(neuron).0 += input.0;
+                }
+            });
     }
 
-    /// Returns a mutable slice of the inputs of the neurons on the last executed tick.  
-    /// For more information see [Network::last_accumulator_buf].
-    #[inline]
-    pub fn last_accumulator_buf_mut(&mut self) -> &mut [NeuronValue] {
-        let index = (self.current_cum_buf + ACCUMULATOR_BUF_COUNT - 1) % ACCUMULATOR_BUF_COUNT;
-        self.accumulators[index].as_mut().unwrap()
+    /// Read values of the designated output neurons into the specified buffer, in order.
+    /// # Panics
+    /// When `outputs.len()` is not equal to the output neuron count.  
+    pub fn read_outputs(&self, outputs: &mut [NeuronValue]) {
+        assert_eq!(self.output_neurons.len(), outputs.len());
+
+        let cum = self.last_accumulator_buf();
+
+        self.output_neurons
+            .iter()
+            .copied()
+            .zip(outputs.iter_mut())
+            .for_each(|(neuron, output)| {
+                unsafe {
+                    *output = *cum.get_unchecked(neuron);
+                }
+            });
     }
 
-    /// Execute a tick on the network, updating [Network::last_accumulator_buf]
+    /// Execute a tick on the network, evaluating each neuron.
     pub fn tick(&mut self) {
         let mut cum = self.accumulators[self.current_cum_buf].take().unwrap();
         let inputs = self.last_accumulator_buf();
@@ -244,7 +278,6 @@ impl Network {
                         0..self.connection_count - non_wrapping_range.len(),
                         non_wrapping_range.len(),
                     );
-                    
                     self.apply_effects(
                         &mut cum,
                         src,
@@ -257,6 +290,16 @@ impl Network {
 
         self.accumulators[self.current_cum_buf] = Some(cum);
         self.advance_cum_buf();
+    }
+
+    #[inline]
+    fn last_accumulator_buf(&self) -> &[NeuronValue] {
+        self.accumulators[self.last_accumulator_buf_index()].as_ref().unwrap()
+    }
+
+    #[inline]
+    fn last_accumulator_buf_index(&self) -> usize {
+        (self.current_cum_buf + ACCUMULATOR_BUF_COUNT - 1) % ACCUMULATOR_BUF_COUNT
     }
 
     #[inline]
@@ -294,54 +337,96 @@ mod tests {
     #[test]
     #[should_panic]
     fn catch_zero_neuron_count() {
-        let _ = Network::new(0, 1);
+        let _ = Network::new(0, 1, 0, 0);
     }
     
     #[test]
     #[should_panic]
     fn catch_zero_connection_count() {
-        let _ = Network::new(1, 0);
+        let _ = Network::new(1, 0, 0, 0);
     }
     
     #[test]
     #[should_panic]
     fn catch_invalid_connection_count() {
-        let _ = Network::new(1, 2);
+        let _ = Network::new(1, 2, 0, 0);
     }
 
     #[test]
     #[should_panic]
     fn catch_effect_count_overflow() {
         let max = usize::MAX;
-        let _ = Network::new(max, 2);
+        let _ = Network::new(max, 2, 0, 0);
     }
 
     #[test]
     #[should_panic]
-    fn catch_zero_action_potentials() {
-        let _ = Network::with_params(vec![].into(), vec![Effect(0)].into());
+    fn catch_zero_tresholds() {
+        let _ = Network::with_params(
+            vec![].into(),
+            vec![Effect(0)].into(),
+            vec![].into(),
+            vec![].into(),
+        );
     }
     
     #[test]
     #[should_panic]
     fn catch_zero_effects() {
-        let _ = Network::with_params(vec![NeuronValue(0)].into(), vec![].into());
+        let _ = Network::with_params(
+            vec![NeuronValue(0)].into(),
+            vec![].into(),
+            vec![].into(),
+            vec![].into(),
+        );
     }
     
     #[test]
     #[should_panic]
     fn catch_too_little_effects() {
-        let _ = Network::with_params(vec![NeuronValue(0); 2].into(), vec![Effect(0)].into());
+        let _ = Network::with_params(
+            vec![NeuronValue(0); 2].into(),
+            vec![Effect(0)].into(),
+            vec![].into(),
+            vec![].into(),
+        );
     }
     
     #[test]
     #[should_panic]
     fn catch_too_many_effects() {
-        let _ = Network::with_params(vec![NeuronValue(0); 2].into(), vec![Effect(0); 6].into());
+        let _ = Network::with_params(
+            vec![NeuronValue(0); 2].into(),
+            vec![Effect(0); 6].into(),
+            vec![].into(),
+            vec![].into(),
+        );
     }
 
     #[test]
-    fn test_tick() {
+    #[should_panic]
+    fn catch_invalid_input_index() {
+        let _ = Network::with_params(
+            vec![NeuronValue(0); 2].into(),
+            vec![Effect(0); 6].into(),
+            vec![2usize].into(),
+            vec![].into(),
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    fn catch_invalid_output_index() {
+        let _ = Network::with_params(
+            vec![NeuronValue(0); 2].into(),
+            vec![Effect(0); 6].into(),
+            vec![].into(),
+            vec![2usize].into(),
+        );
+    }
+
+    #[test]
+    fn tick_io() {
         let action_potentials = vec![
             NeuronValue(0),
             NeuronValue(16),
@@ -354,8 +439,25 @@ mod tests {
             Effect(127), Effect(0), Effect(0),
         ].into();
 
-        let mut net = Network::with_params(action_potentials, effects);
+        let input_neurons = vec![
+            2,
+            0,
+        ].into();
+        
+        let output_neurons = vec![
+            2,
+            0,
+            1,
+        ].into();
 
+        let mut net = Network::with_params(
+            action_potentials,
+            effects,
+            input_neurons,
+            output_neurons,
+        );
+
+        // first evaluate 2 ticks for expected output
         net.tick();
 
         assert_eq!(
@@ -375,6 +477,38 @@ mod tests {
                 NeuronValue(-16),
                 NeuronValue(256),
                 NeuronValue(-8),
+            ],
+        );
+
+        // then check if inputs and outputs are handled correctly
+        net.apply_inputs(
+            &[
+                NeuronValue(-9),
+                NeuronValue(0),
+            ]
+        );
+
+        net.tick();
+
+        assert_eq!(
+            net.last_accumulator_buf(),
+            &[
+                NeuronValue(-17),
+                NeuronValue(127),
+                NeuronValue(0),
+            ],
+        ); 
+
+        let mut outputs = [NeuronValue(0); 3];
+
+        net.read_outputs(&mut outputs);
+
+        assert_eq!(
+            &outputs,
+            &[
+                NeuronValue(0),
+                NeuronValue(-17),
+                NeuronValue(127),
             ],
         );
     }
