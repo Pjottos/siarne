@@ -11,8 +11,8 @@ There are utilities for tweaking these parameters (training), currently only an 
 
 ## Optimization
 The main evaluation code is automatically vectorized and should therefore run blazing fast on many platforms.  
-To give an impression, the `network_tick` benchmark on an i7-4790 runs at about 370 microseconds per iteration for 4096 neurons with 1024 connections per neuron. That's 11 billion connections per second.  
-If the benchmark is run with `target-cpu=native` the time per tick goes down to about 200 microseconds, or 21 billion connections per second.  
+To give an impression, the `network_tick` benchmark on an i7-4790 runs at about 370 microseconds per tick for 4096 neurons with 1024 connections per neuron.   
+If the benchmark is run with `target-cpu=native` the time per tick goes down to about 200 microseconds.  
 
 Currently the evaluation code is completely single threaded, future work includes looking at multithreading oppurtunities within a single network.  
 
